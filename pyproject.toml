@@ -13,6 +13,9 @@ dependencies = [
   "transformers>=4.57.1",
   "datasets>=4.4.1",
   "torchview>=0.2.7",
+  "flax>=0.12.1",
+  "torch-summary>=1.4.5",
+  "torchinfo>=1.8.0",
 ]
 
 [[tool.uv.index]]

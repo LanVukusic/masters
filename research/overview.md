@@ -100,3 +100,5 @@ Ideja je, da online generiraš muziko in denoisas sample. Sampli ki so bližje t
 
 - [Differentiable DSP](https://github.com/magenta/ddsp)
   - za kalkulirat razne fine featurje iz modela.
+
+
