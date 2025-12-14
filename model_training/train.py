@@ -11,7 +11,7 @@ from model_training.tokenizer.mimi_audio_tokenizer import MimiAudioTokenizer
 from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
+print(f"device: {device}")
 # Configuration
 config = {
     "history_length": 6,
