@@ -4,24 +4,27 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from model.JointModel import JointAudioContinuationModel
 from model_training.dataloader.audio_tokenized_dataset import AudioTokenizedDataset
 from model_training.tokenizer.mimi_audio_tokenizer import MimiAudioTokenizer
 from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # Configuration
 config = {
-    "history_length": 5,
-    "future_frames": 1,
-    "rvq_levels": 4,
+    "history_length": 6,
+    "future_frames": 2,
+    "rvq_levels": 6,
     "embedding_dim": 256,
-    "batch_size": 2,
+    "batch_size": 6,
     "codebook_size": 1024,  # Updated to match Mimi tokenizer range (0-2047) or DAC 1024
     "learning_rate": 3e-4,
-    "num_epochs": 100,
+    "num_epochs": 1000,
     "audio_dir": "dataset_gen/rotormotor/mp3s",  # Update this path as needed
     "tokenizer_type": "DAC",  # or "MIMI"
+    "device": device
 }
 
 
@@ -32,8 +35,9 @@ dataset = AudioTokenizedDataset(
     tokenizer=config["tokenizer_type"],
     num_chunks=config["history_length"] + config["future_frames"],  # Total sequence length
     rvq_depth=config["rvq_levels"],
-    cache_size=1,  # Keep 20 songs in memory
+    cache_size=10,  # Keep 20 songs in memory
     preload_cache=True,  # Preload songs on initialization
+    device=config["device"]
 )
 
 dataloader = DataLoader(
@@ -58,6 +62,10 @@ model = JointAudioContinuationModel(
     embedding_dim=config["embedding_dim"],
     codebook_size=config["codebook_size"],
 )
+model.to(device)
+
+# Initialize TensorBoard writer
+writer = SummaryWriter(log_dir="runs/audio_continuation_training")
 
 # Training loop with actual data from dataloader
 optimizer = torch.optim.AdamW(model.parameters(), lr=config["learning_rate"])
@@ -131,29 +139,57 @@ for epoch in range(config["num_epochs"]):
         epoch_loss += loss.item()
         batch_count += 1
         
+        # Log batch-level metrics every 10 batches
+        if batch_idx % 10 == 0:
+            writer.add_scalar('Batch/Loss', loss.item(), epoch * len(dataloader) + batch_idx)
+            writer.add_scalar('Batch/Learning_Rate', optimizer.param_groups[0]['lr'], epoch * len(dataloader) + batch_idx)
+            
+            # Log gradient norm
+            total_grad_norm = 0
+            for p in model.parameters():
+                if p.grad is not None:
+                    total_grad_norm += p.grad.norm().item() ** 2
+            total_grad_norm = total_grad_norm ** 0.5
+            writer.add_scalar('Batch/Gradient_Norm', total_grad_norm, epoch * len(dataloader) + batch_idx)
+        
         # Print progress for first few batches in each epoch
         print(f"  Batch {batch_idx + 1}: Loss = {loss.item():.4f}")
     
     if batch_count > 0:
         avg_epoch_loss = epoch_loss / batch_count
         print(f"Epoch {epoch + 1}/{config['num_epochs']}, Average Loss: {avg_epoch_loss:.4f}")
+        
+        # Log epoch-level metrics
+        writer.add_scalar('Epoch/Average_Loss', avg_epoch_loss, epoch)
+        writer.add_scalar('Epoch/Learning_Rate', optimizer.param_groups[0]['lr'], epoch)
+        
+        # Log gradient norm at epoch level
+        total_grad_norm = 0
+        for p in model.parameters():
+            if p.grad is not None:
+                total_grad_norm += p.grad.norm().item() ** 2
+        total_grad_norm = total_grad_norm ** 0.5
+        writer.add_scalar('Epoch/Gradient_Norm', total_grad_norm, epoch)
     else:
         print(f"Epoch {epoch + 1}/{config['num_epochs']}, No valid batches processed")
 
-# Inference example with dummy data (since we need to test the model's generation capability)
-print("\nRunning inference...")
-model.eval()
-with torch.no_grad():
-    # Create dummy historical data for inference testing
-    dummy_historical = torch.randint(
-        0, config["codebook_size"], 
-        (config["batch_size"], config["history_length"], config["rvq_levels"])
-    )
-    generated = model.generate(dummy_historical)
-    print(f"Generated RVQ shape: {generated.shape}")
-    print(
-        f"Generated RVQ min/max: {generated.min().item()}, {generated.max().item()}"
-    )
+# # Inference example with dummy data (since we need to test the model's generation capability)
+# print("\nRunning inference...")
+# model.eval()
+# with torch.no_grad():
+#     # Create dummy historical data for inference testing
+#     dummy_historical = torch.randint(
+#         0, config["codebook_size"], 
+#         (config["batch_size"], config["history_length"], config["rvq_levels"])
+#     )
+#     generated = model.generate(dummy_historical)
+#     print(f"Generated RVQ shape: {generated.shape}")
+#     print(
+#         f"Generated RVQ min/max: {generated.min().item()}, {generated.max().item()}"
+#     )
+
+# Close TensorBoard writer
+writer.close()
 
 # Save model
 torch.save(model.state_dict(), "audio_continuation_model.pth")
