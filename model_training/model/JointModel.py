@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
-from frame import FrameModel
-from depth import DepthModel
-from inputDepth import InputDepthModel
+from model.frame import FrameModel
+from model.depth import DepthModel
+from model.inputDepth import InputDepthModel
 
 
 class JointAudioContinuationModel(nn.Module):
