@@ -6,9 +6,9 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from model.JointModel import JointAudioContinuationModel
-from model_training.dataloader.audio_tokenized_dataset import AudioTokenizedDataset
-from model_training.tokenizer.mimi_audio_tokenizer import MimiAudioTokenizer
+from model_training.dataloader.raw_dataset import RawAudioDataset
 from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
+from model_training.tokenizer.mimi_audio_tokenizer import MimiAudioTokenizer
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"device: {device}")
@@ -22,7 +22,7 @@ config = {
     "codebook_size": 1024,  # Updated to match Mimi tokenizer range (0-2047) or DAC 1024
     "learning_rate": 3e-4,
     "num_epochs": 1000,
-    "audio_dir": "dataset_gen/rotormotor/mp3s",  # Update this path as needed
+    "audio_dir": "dataset_gen/rotormotor/mp3s_small",  # Update this path as needed
     "tokenizer_type": "DAC",  # or "MIMI"
     "device": device
 }
@@ -30,27 +30,30 @@ config = {
 
 
 # Create dataset and dataloader
-dataset = AudioTokenizedDataset(
+dataset = RawAudioDataset(
     audio_dir=config["audio_dir"],
-    tokenizer=config["tokenizer_type"],
+    tokenizer_type=config["tokenizer_type"],
     num_chunks=config["history_length"] + config["future_frames"],  # Total sequence length
-    rvq_depth=config["rvq_levels"],
-    cache_size=10,  # Keep 20 songs in memory
-    preload_cache=True,  # Preload songs on initialization
-    device=config["device"]
+    cache_size=10,  # Keep songs in memory
 )
 
 dataloader = DataLoader(
     dataset, 
     batch_size=config["batch_size"], 
     shuffle=True, 
-    num_workers=8  # Set to 0 to avoid multiprocessing issues during debugging
+    num_workers=8 , # Set to 0 to avoid multiprocessing 
+    pin_memory=True # https://docs.pytorch.org/docs/stable/data.html#memory-pinning
 )
 
 print(f"Dataset created successfully!")
 print(f"Number of audio files found: {len(dataset.audio_files)}")
 print(f"Estimated dataset length: {len(dataset)}")
 print(f"Dataloader batch size: {config['batch_size']}")
+
+if(config["tokenizer_type"] == "DAC"):
+  tokenizer = DACAudioTokenizer(num_quantizers=config["rvq_levels"], device=device)
+else:
+  tokenizer = MimiAudioTokenizer(num_quantizers=config["rvq_levels"], device=device)
 
 
 
@@ -76,13 +79,19 @@ for epoch in range(config["num_epochs"]):
     epoch_loss = 0.0
     batch_count = 0
     
-    for batch_idx, batch in enumerate(dataloader):
+    for batch_idx, raw_audio_batch in enumerate(dataloader):
+        raw_audio_gpu = raw_audio_batch.to(device, non_blocking=True) # non_blocking=True helps overlap transfer/computation
+        # Tokenize ON THE GPU - this is where the heavy lifting happens efficiently
+        with torch.no_grad(): # Tokenization doesn't require gradients during data loading
+            batch = tokenizer.encode_from_waveform(raw_audio_gpu, tokenizer.sampling_rate)
+
+
         # batch shape: [batch_size, rvq_levels, time_steps]
         batch_size_current, rvq_levels, total_time_steps = batch.shape
         
         # Split the batch into historical and future parts
         # Assuming each chunk represents one time step
-        frames_per_chunk = (dataset.chunk_duration * dataset.sampling_rate) // dataset.samples_per_frame
+        frames_per_chunk = (1920 * tokenizer.sampling_rate) // dataset.samples_per_frame
         
         # We need to split the temporal dimension appropriately
         total_chunks_needed = config["history_length"] + config["future_frames"]

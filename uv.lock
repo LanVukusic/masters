@@ -952,6 +952,7 @@ dependencies = [
     { name = "torchcodec" },
     { name = "torchinfo" },
     { name = "torchview" },
+    { name = "tqdm" },
     { name = "transformers" },
 ]
 
@@ -969,6 +970,7 @@ requires-dist = [
     { name = "torchcodec", specifier = ">=0.8.1" },
     { name = "torchinfo", specifier = ">=1.8.0" },
     { name = "torchview", specifier = ">=0.2.7" },
+    { name = "tqdm", specifier = ">=4.67.1" },
     { name = "transformers", specifier = ">=4.57.1" },
 ]
 
