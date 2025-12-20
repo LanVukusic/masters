@@ -1,14 +1,11 @@
 import torch
 import torchaudio
-import numpy as np
 import dac
 from audiotools import AudioSignal
-from typing import Union, Optional, Tuple, List
+from typing import Union, Tuple, List
 import warnings
-import tempfile
-import os
 
-model_type = "24khz" # or "44khz"
+model_type = "24khz"  # or "44khz"
 SAMPLE_RATE = 24000 if model_type == "24khz" else 44000
 SAMPLES_PER_FRAME = 1920
 
@@ -21,7 +18,7 @@ class DACAudioTokenizer:
 
     def __init__(
         self,
-        num_quantizers = 16,
+        num_quantizers=16,
         device: str = "cpu",
     ):
         """
@@ -47,6 +44,7 @@ class DACAudioTokenizer:
 
         print(f"DAC Model loaded successfully on {self.device}")
         self.sampling_rate = SAMPLE_RATE
+
     def _get_device(self, device: str = None) -> str:
         """
         Determine the device to run the model on.
@@ -127,9 +125,7 @@ class DACAudioTokenizer:
             return self._encode(waveform, original_sampling_rate)
         elif isinstance(audio_path, list):
             # Multiple audio files
-            encoded_batch = [
-                self.encode_from_path(path) for path in audio_path
-            ]
+            encoded_batch = [self.encode_from_path(path) for path in audio_path]
             return encoded_batch
         else:
             raise ValueError("audio_path must be a string or list of strings")
@@ -194,17 +190,12 @@ class DACAudioTokenizer:
         # Preprocess and encode to get the actual codes
         x = self.model.preprocess(signal.audio_data, signal.sample_rate)
         z, codes, latents, _, _ = self.model.encode(x, n_quantizers=self.num_quantizers)
-        
-        # Return codes in format [batch, quantizers, time_steps]
-        # DAC codes shape is already [batch, n_quantizers, time_steps]
-        # No transpose needed - the shape is already correct
-        codes = codes  # [batch, n_quantizers, time_steps]
+
+        # codes   # [batch, n_quantizers, time_steps]
         # print("prepared")
         return codes
 
-    def decode_from_codes(
-        self, codes: torch.Tensor
-    ) -> torch.Tensor:
+    def decode_from_codes(self, codes: torch.Tensor) -> torch.Tensor:
         """
         Decode DAC codes back to raw waveform.
 
@@ -216,7 +207,7 @@ class DACAudioTokenizer:
         """
         # Convert codes back to DAC format [n_quantizers, batch, time_steps]
         codes_dac_format = codes.permute(1, 0, 2)  # [quantizers, batch, time_steps]
-        
+
         # Decode using DAC model - need to handle the quantizer output properly
         with torch.no_grad():
             # The quantizer.from_codes returns a tuple, we need the first element
@@ -226,11 +217,11 @@ class DACAudioTokenizer:
                 z = z_tuple[0]  # Take the first element of the tuple
             else:
                 z = z_tuple  # If it's not a tuple, use as is
-            
+
             # The decode method expects the latent representation and returns [batch, channels, samples]
             # But it returns with batch and channels swapped, so we need to fix the shape
             decoded_audio = self.model.decode(z)
-        
+
         # The DAC decode returns [batch, channels, samples] but we might need to ensure correct shape
         # If the shape is [n_quantizers, channels, samples] due to the batch dimension being wrong,
         # we need to handle it properly
@@ -238,7 +229,7 @@ class DACAudioTokenizer:
             # The decoded audio should have the same batch size as input codes
             # DAC decode might return [batch, channels, samples] correctly
             pass  # The shape should be correct as [batch, channels, samples]
-        
+
         return decoded_audio.to(self.device)
 
     def decode_to_waveform(
@@ -265,9 +256,7 @@ class DACAudioTokenizer:
                 decoded_batch.append(decoded)
             return decoded_batch
         else:
-            raise ValueError(
-                "codes must be a torch.Tensor or list of torch.Tensors"
-            )
+            raise ValueError("codes must be a torch.Tensor or list of torch.Tensors")
 
     def decode_to_file(
         self,
@@ -286,16 +275,12 @@ class DACAudioTokenizer:
         if isinstance(codes, list):
             if not isinstance(output_path, list):
                 # Multiple codes and single output path (save as batch with numbered files)
-                base_path = output_path.rsplit('.', 1)[0]
-                ext = output_path.rsplit('.', 1)[1] if '.' in output_path else 'wav'
-                output_path = [
-                    f"{base_path}_{i}.{ext}" for i in range(len(codes))
-                ]
+                base_path = output_path.rsplit(".", 1)[0]
+                ext = output_path.rsplit(".", 1)[1] if "." in output_path else "wav"
+                output_path = [f"{base_path}_{i}.{ext}" for i in range(len(codes))]
 
             if len(codes) != len(output_path):
-                raise ValueError(
-                    "Number of codes must match number of output paths"
-                )
+                raise ValueError("Number of codes must match number of output paths")
 
             for single_codes, path in zip(codes, output_path):
                 self.decode_to_file(single_codes, path, format)
@@ -305,26 +290,22 @@ class DACAudioTokenizer:
 
             # Decode the codes to waveform
             decoded_waveform = self.decode_from_codes(codes)
-            
+
             # Convert to AudioSignal for saving
             # Remove batch dimension if present for single audio
             if decoded_waveform.dim() == 3 and decoded_waveform.shape[0] == 1:
                 audio_data = decoded_waveform.squeeze(0)
             else:
                 audio_data = decoded_waveform
-            
+
             # Create AudioSignal and save
             signal = AudioSignal(audio_data.cpu().numpy(), sample_rate=SAMPLE_RATE)
             signal.write(output_path)
             print(f"Audio saved to {output_path}")
         else:
-            raise ValueError(
-                "codes must be a torch.Tensor or list of torch.Tensors"
-            )
+            raise ValueError("codes must be a torch.Tensor or list of torch.Tensors")
 
-    def encode_decode_cycle(
-        self, audio_path: str
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    def encode_decode_cycle(self, audio_path: str) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Perform a complete encode-decode cycle.
 
@@ -343,7 +324,7 @@ class DACAudioTokenizer:
 
         # Decode
         decoded_waveform = self.decode_to_waveform(compressed_obj)
-        
+
         # Remove extra batch dimension if present to match original shape
         if decoded_waveform.dim() == 3 and prepared_original.dim() == 2:
             decoded_waveform = decoded_waveform.squeeze(0)

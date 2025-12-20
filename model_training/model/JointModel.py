@@ -24,10 +24,10 @@ class JointAudioContinuationModel(nn.Module):
         future_frames: int = 2,  # Number of future frames to generate
         rvq_levels: int = 12,  # RVQ codebook levels
         embedding_dim: int = 512,
+        codebook_size: int = 1024,
         frame_model_layers: int = 6,
         depth_model_layers: int = 2,
         input_depth_model_layers: int = 3,
-        codebook_size: int = 1024,
     ):
         super().__init__()
         self.history_length = history_length
@@ -117,13 +117,14 @@ class JointAudioContinuationModel(nn.Module):
             total_loss = 0
             token_level_losses = []
 
+            loss_multiplyer = torch.linspace(1.0, 0.3, self.rvq_levels)
             # Calculate loss for each RVQ level and frame
             for frame_idx in range(self.future_frames):
                 for level in range(self.rvq_levels):
                     logits = all_logits[frame_idx][level]  # (batch_size, codebook_size)
                     targets = future_rvq[:, frame_idx, level]  # (batch_size,)
                     loss = self.ce_loss(logits, targets)
-                    total_loss += loss
+                    total_loss += loss * loss_multiplyer[level]
                     token_level_losses.append(loss.item())
 
             # Frame token consistency loss (optional but recommended per patent)
@@ -177,14 +178,14 @@ class JointAudioContinuationModel(nn.Module):
         Returns:
             generated_rvq: (batch_size, future_frames, rvq_levels)
         """
-        self.eval()
+        # self.train(False)
         with torch.no_grad():
             return self(historical_rvq)["generated_rvq"]
 
 
 if __name__ == "__main__":
     from torchinfo import summary
-    
+
     # Create model instance with typical parameters
     model = JointAudioContinuationModel(
         history_length=5,
@@ -194,28 +195,34 @@ if __name__ == "__main__":
         frame_model_layers=6,
         depth_model_layers=2,
         input_depth_model_layers=3,
-        codebook_size=1024
+        codebook_size=1024,
     )
-    
+
     print("JointAudioContinuationModel Architecture:")
     print(model)
     print(f"\nTotal parameters: {sum(p.numel() for p in model.parameters()):,}")
-    print(f"Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
-    
+    print(
+        f"Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}"
+    )
+
     # Test forward pass with correct dimensions
-    historical_rvq = torch.randint(0, 1024, (1, 5, 12))  # (batch_size=1, history_length=5, rvq_levels=12)
+    historical_rvq = torch.randint(
+        0, 1024, (1, 5, 12)
+    )  # (batch_size=1, history_length=5, rvq_levels=12)
     output = model(historical_rvq)
     print(f"\nForward pass test - Input: {historical_rvq.shape}")
     print(f"Output keys: {list(output.keys())}")
-    if 'generated_rvq' in output:
+    if "generated_rvq" in output:
         print(f"Generated RVQ shape: {output['generated_rvq'].shape}")
-    
+
     # Fixed summary call with proper input dimensions
-    dummy_input = torch.randint(0, 1024, (1, 5, 12), dtype=torch.long)  # Correct 3D shape
+    dummy_input = torch.randint(
+        0, 1024, (1, 5, 12), dtype=torch.long
+    )  # Correct 3D shape
     summary(
         model,
         input_data=(dummy_input,),  # Pass as tuple for positional arguments
         device="cpu",
         verbose=1,
-        col_names=["input_size", "output_size", "num_params"]
+        col_names=["input_size", "output_size", "num_params"],
     )

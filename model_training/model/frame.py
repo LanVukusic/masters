@@ -101,30 +101,32 @@ class FrameModel(nn.Module):
 
 if __name__ == "__main__":
     from torchinfo import summary
-    
+
     # Create model instance with typical parameters
     model = FrameModel(
-        rvq_levels=12,
-        embedding_dim=256,
-        num_layers=3,
-        num_heads=4,
-        future_frames=2
+        rvq_levels=12, embedding_dim=256, num_layers=3, num_heads=4, future_frames=2
     )
-    
+
     print("FrameModel Architecture:")
     print(model)
     print(f"\nTotal parameters: {sum(p.numel() for p in model.parameters()):,}")
-    print(f"Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
-    
+    print(
+        f"Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}"
+    )
+
     # Test forward pass
-    historical_rvq = torch.randint(0, 1024, (1, 5, 12))  # (batch_size=1, history_length=5, rvq_levels=12)
+    historical_rvq = torch.randint(
+        0, 1024, (1, 5, 12)
+    )  # (batch_size=1, history_length=5, rvq_levels=12)
     output = model(historical_rvq)
-    print(f"\nForward pass test - Input: {historical_rvq.shape}, Output: {output.shape}")
-    
+    print(
+        f"\nForward pass test - Input: {historical_rvq.shape}, Output: {output.shape}"
+    )
+
     # FIX: Use correct input_size format for torchinfo with batch dimension and dtype
     summary(
         model,
         input_size=(1, 5, 12),  # Include batch dimension
-        device='cpu',
-        dtypes=[torch.long]  # Specify dtype for embedding layers
+        device="cpu",
+        dtypes=[torch.long],  # Specify dtype for embedding layers
     )

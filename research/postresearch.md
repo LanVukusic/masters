@@ -14,3 +14,6 @@ counterpoint improvisation,” in NIME, 2020.
 [9] Zihao Wang, Kejun Zhang, Yuxing Wang, et al., “Songdriver:
 Real-time music accompaniment generation without logical la-
 tency nor exposure bias,” in ACM MM, 2022.
+
+https://arxiv.org/pdf/2006.08195
+Snake activation function - learning periodic function
