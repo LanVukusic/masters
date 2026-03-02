@@ -6,9 +6,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from model_testing.model import TestModel  # Updated import
-from model_training.dataloader.raw_dataset import RawAudioDataset
+
+# from model_training.dataloader.raw_dataset import RawAudioDataset
+from model_training.dataloader.jointFrameLoader import JointFrameLoader
 from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
-from model_training.tokenizer.mimi_audio_tokenizer import MimiAudioTokenizer
+
+# from model_training.tokenizer.mimi_audio_tokenizer import MimiAudioTokenizer
 import time
 
 MODEL_NAME = f"audio_continuation_{time.strftime('DD.HH:mm')}"
@@ -18,47 +21,45 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"device: {device}")
 # Configuration
 config = {
-    "history_length": 10,
-    "future_length": 4,
-    "rvq_levels": 16,
+    "history_length": 20,
+    "future_length": 10,
+    "rvq_levels": 4,
     "embedding_dim": 256,
     "batch_size": 6,
     "codebook_size": 1024,  # Updated to match Mimi tokenizer range (0-2047) or DAC 1024
     "learning_rate": 3e-4,
     "num_epochs": 1000,
-    "audio_dir": "dataset_gen/rotormotor/mp3s_small",
-    "tokenizer_type": "DAC",  # or "MIMI"
+    "audio_dir": "./dataset_gen/rotormotor/mp3s_small",
     "device": device,
 }
 
+tokenizer = DACAudioTokenizer(num_quantizers=config["rvq_levels"], device=device)
+# tokenizer = MimiAudioTokenizer(num_quantizers=config["rvq_levels"], device=device)
+
 
 # Create dataset and dataloader
-dataset = RawAudioDataset(
-    audio_dir=config["audio_dir"],
-    tokenizer_type=config["tokenizer_type"],
-    num_chunks=config["history_length"]
+dataset = JointFrameLoader(
+    num_frames=config["history_length"]
     + config["future_length"],  # Total sequence length
-    cache_size=3,  # Reduced cache size to prevent memory issues on GPU server
+    tokenizer=tokenizer,
+    num_quantizers=config["rvq_levels"],
+    audio_dir=config["audio_dir"],
+    max_concurrent_frames=30,
 )
 
 dataloader = DataLoader(
     dataset,
     batch_size=config["batch_size"],
-    shuffle=True,
-    num_workers=1,  # Reduced from 8 to 1 to prevent memory issues on GPU server
+    shuffle=False,
+    num_workers=0,  # Reduced from 8 to 1 to prevent memory issues on GPU server
     pin_memory=True,  # Enable to make memory transfer faster
-    persistent_workers=True,  # keep workers alive between epochs - expensive init
+    # persistent_workers=True,  # keep workers alive between epochs - expensive init
 )
 
 print("Dataset created successfully!")
-print(f"Number of audio files found: {len(dataset.audio_files)}")
+print(f"Number of audio files found: {len(dataset)}")
 print(f"Estimated dataset length: {len(dataset)}")
 print(f"Dataloader batch size: {config['batch_size']}")
-
-if config["tokenizer_type"] == "DAC":
-    tokenizer = DACAudioTokenizer(num_quantizers=config["rvq_levels"], device=device)
-else:
-    tokenizer = MimiAudioTokenizer(num_quantizers=config["rvq_levels"], device=device)
 
 
 # Initialize model AFTER dataset creation to ensure correct codebook_size
@@ -113,23 +114,15 @@ for epoch in range(config["num_epochs"]):
     batch_count = 0
 
     for batch_idx, raw_audio_batch in enumerate(dataloader):
-        raw_audio_gpu = raw_audio_batch.to(
-            device, non_blocking=True
-        )  # non_blocking=True helps overlap transfer/computation
-        # Tokenize ON THE GPU - this is where the heavy lifting happens efficiently
-        with (
-            torch.no_grad()
-        ):  # Tokenization doesn't require gradients during data loading
-            batch = tokenizer.encode_from_waveform(
-                raw_audio_gpu, tokenizer.sampling_rate
-            )
+        batch = raw_audio_batch
+        print(batch, batch.shape)
 
         # batch shape: [batch_size, rvq_levels, time_steps]
         batch_size_current, rvq_levels, total_time_steps = batch.shape
 
         # Split the batch into historical and future parts
         # Assuming each chunk represents one time step
-        frames_per_chunk = (1920 * tokenizer.sampling_rate) // dataset.samples_per_frame
+        frames_per_chunk = (1920 * tokenizer.sampling_rate) // tokenizer.frame_size
 
         # We need to split the temporal dimension appropriately
         total_chunks_needed = config["history_length"] + config["future_length"]

@@ -23,7 +23,7 @@ print(f"device: {device}")
 config = {
     "history_length": int(5 * 7.5),  # 8 second history
     "future_frames": int(3 * 7.5),  # 2 seconds of future
-    "rvq_levels": 6,
+    "rvq_levels": 3,
     "embedding_dim": 128,
     "batch_size": 2,
     "codebook_size": 1024,  # Updated to match Mimi tokenizer range (0-2047) or DAC 1024
@@ -35,10 +35,7 @@ config = {
 }
 
 
-if config["tokenizer_type"] == "DAC":
-    tokenizer = DACAudioTokenizer(num_quantizers=config["rvq_levels"], device=device)
-else:
-    tokenizer = MimiAudioTokenizer(num_quantizers=config["rvq_levels"], device=device)
+tokenizer = DACAudioTokenizer(num_quantizers=config["rvq_levels"], device=device)
 
 # Create dataset and dataloader
 dataset = RawAudioDataset(

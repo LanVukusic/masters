@@ -1,9 +1,9 @@
 import torch
 import torchaudio
-import numpy as np
 from transformers import MimiModel, AutoFeatureExtractor
 from typing import Union, Optional, Tuple, List
 import warnings
+from .tokenizer import AudioTokenizer
 
 SAMPLES_PER_FRAME = 1920
 SAMPLE_RATE = 24000  # 2.4KHZ
@@ -11,7 +11,7 @@ SAMPLE_RATE = 24000  # 2.4KHZ
 MODEL_STRING: str = "kyutai/mimi"
 
 
-class MimiAudioTokenizer:
+class MimiAudioTokenizer(AudioTokenizer):
     """
     A reusable tokenizer class for audio deep learning that handles model loading,
     CPU/GPU inference, and provides encoding/decoding functionality.
@@ -45,8 +45,6 @@ class MimiAudioTokenizer:
         self.sampling_rate = SAMPLE_RATE
         print(f"Model loaded successfully on {self.device}")
         self.sampling_rate = self.feature_extractor.sampling_rate
-
-
 
     def _prepare_audio(
         self, waveform: torch.Tensor, original_sampling_rate: int

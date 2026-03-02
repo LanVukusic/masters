@@ -4,13 +4,14 @@ import dac
 from audiotools import AudioSignal
 from typing import Union, Tuple, List
 import warnings
+from .tokenizer import AudioTokenizer
 
 model_type = "24khz"  # or "44khz"
 SAMPLE_RATE = 24000 if model_type == "24khz" else 44000
 SAMPLES_PER_FRAME = 1920
 
 
-class DACAudioTokenizer:
+class DACAudioTokenizer(AudioTokenizer):
     """
     A reusable tokenizer class for audio deep learning using DAC (Discrete Audio Codec),
     that handles model loading, CPU/GPU inference, and provides encoding/decoding functionality.
@@ -43,7 +44,15 @@ class DACAudioTokenizer:
         self.model.eval()  # Set to evaluation mode
 
         print(f"DAC Model loaded successfully on {self.device}")
-        self.sampling_rate = SAMPLE_RATE
+        # self.sampling_rate = SAMPLE_RATE
+
+    @property
+    def frame_size(self):
+        return 330
+
+    @property
+    def sampling_rate(self):
+        return SAMPLE_RATE
 
     def _get_device(self, device: str = None) -> str:
         """

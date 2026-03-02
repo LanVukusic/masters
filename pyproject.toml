@@ -19,6 +19,7 @@ dependencies = [
   "descript-audio-codec>=1.0.0",
   "tensorboard>=2.20.0",
   "tqdm>=4.67.1",
+  "soundfile>=0.13.1",
 ]
 
 [[tool.uv.index]]
