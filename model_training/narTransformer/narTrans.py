@@ -8,6 +8,7 @@ Architecture:
 import torch
 import torch.nn as nn
 from typing import Optional, Tuple, List
+import math
 
 
 # Positional Embeddings (RoPE)
@@ -31,16 +32,10 @@ class RotaryEmbedding(nn.Module):
         self.register_buffer("inv_freq", inv_freq)
 
     def forward(self, x: torch.Tensor, seq_len: int) -> torch.Tensor:
-        """
-        Args:
-            x: Tensor of shape (batch, seq_len, dim)
-            seq_len: Actual sequence length
-        Returns:
-            Rotated embeddings
-        """
         t = torch.arange(seq_len, device=x.device, dtype=self.inv_freq.dtype)
         freqs = torch.einsum("i,j->ij", t, self.inv_freq)
-        emb = torch.cat((freqs, freqs), dim=-1)
+        # Create sin and cos separately
+        emb = torch.cat((freqs.sin(), freqs.cos()), dim=-1)
 
         # Apply rotation
         cos = emb.cos()[None, :, None, :]
@@ -113,16 +108,28 @@ def create_block_causal_mask(
 
 class AudioTransformerBlock(nn.Module):
     """
-    Standard Transformer Decoder Block with RoPE support.
+    A Transformer Decoder Block with a manually implemented attention mechanism
+    to support Rotary Positional Embeddings (RoPE).
     Uses pre-normalization (LayerNorm before attention/FFN) for stability.
     """
 
     def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float = 0.1):
         super().__init__()
+        assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
+
         self.d_model = d_model
-        self.attention = nn.MultiheadAttention(
-            embed_dim=d_model, num_heads=n_heads, dropout=dropout, batch_first=True
-        )
+        self.n_heads = n_heads
+        self.head_dim = d_model // n_heads
+        self.scale = self.head_dim**-0.5
+
+        # 1. Separate linear layers for Q, K, V projections
+        self.q_proj = nn.Linear(d_model, d_model)
+        self.k_proj = nn.Linear(d_model, d_model)
+        self.v_proj = nn.Linear(d_model, d_model)
+
+        # 2. Output projection layer
+        self.out_proj = nn.Linear(d_model, d_model)
+
         self.ffn = nn.Sequential(
             nn.Linear(d_model, d_ff),
             nn.GELU(),
@@ -141,37 +148,48 @@ class AudioTransformerBlock(nn.Module):
         cos: Optional[torch.Tensor] = None,
         sin: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        # ---------- Attention ----------
         residual = x
         x = self.norm1(x)
+        batch_size, seq_len, _ = x.shape
 
+        # 1. Project to Q, K, V
+        q = self.q_proj(x)
+        k = self.k_proj(x)
+        v = self.v_proj(x)
+
+        # 2. Reshape for multi-head attention: (batch, seq_len, n_heads, head_dim)
+        q = q.view(batch_size, seq_len, self.n_heads, self.head_dim)
+        k = k.view(batch_size, seq_len, self.n_heads, self.head_dim)
+        v = v.view(batch_size, seq_len, self.n_heads, self.head_dim)
+
+        # 3. Apply RoPE to Q and K
         if cos is not None and sin is not None:
-            # Manual attention with RoPE - need to split heads first
-            batch, seq_len, _ = x.shape
-            head_dim = self.d_model // self.attention.num_heads
-
-            # Project to Q, K, V
-            q = k = v = x
-
-            # Reshape for multi-head: (batch, seq_len, n_heads, head_dim)
-            q = q.view(batch, seq_len, self.attention.num_heads, head_dim)
-            k = k.view(batch, seq_len, self.attention.num_heads, head_dim)
-            v = v.view(batch, seq_len, self.attention.num_heads, head_dim)
-
-            # Apply RoPE to each head: cos/sin shape is (1, seq_len, 1, head_dim)
             q, k = apply_rope(q, k, cos, sin)
 
-            # Reshape back to (batch, seq_len, d_model) for PyTorch MHA
-            q = q.reshape(batch, seq_len, -1)
-            k = k.reshape(batch, seq_len, -1)
-            v = v.reshape(batch, seq_len, -1)
+        # 4. Permute for attention calculation: (batch, n_heads, seq_len, head_dim)
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
 
-            attn_out, _ = self.attention(q, k, v, attn_mask=mask, need_weights=False)
-        else:
-            attn_out, _ = self.attention(x, x, x, attn_mask=mask, need_weights=False)
+        # 5. Calculate attention using the optimized PyTorch function
+        # The mask needs to be compatible with (batch, n_heads, seq_len, seq_len)
+        # Your current mask is (seq_len, seq_len), which F.scaled_dot_product_attention
+        # can broadcast correctly.
+        attn_output = nn.functional.scaled_dot_product_attention(
+            q, k, v, attn_mask=mask, dropout_p=0.1 if self.training else 0.0
+        )
 
-        x = residual + self.dropout(attn_out)
+        # 6. Permute and reshape back to (batch, seq_len, d_model)
+        attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_output = attn_output.view(batch_size, seq_len, self.d_model)
 
-        # Feed-Forward (unchanged)
+        # 7. Final output projection
+        attn_output = self.out_proj(attn_output)
+
+        x = residual + self.dropout(attn_output)
+
+        # ---------- Feed-Forward ----------
         residual = x
         x = self.norm2(x)
         x = self.ffn(x)
@@ -240,6 +258,23 @@ class AudioForecaster(nn.Module):
                 for _ in range(n_layers)
             ]
         )
+
+        # self.layers = nn.ModuleList(
+        #     [
+        #         nn.TransformerDecoder(
+        #             nn.TransformerDecoderLayer(
+        #                 d_model=512,
+        #                 nhead=4,
+        #                 dim_feedforward=1024,
+        #                 dropout=0.1,
+        #                 batch_first=True,
+        #             ),
+        #             num_layers=2,
+        #         )
+        #         for _ in range(n_layers)
+        #     ]
+        # )
+
         self.final_norm = nn.LayerNorm(d_model)
 
         # Output Heads (one per codebook)
@@ -432,7 +467,8 @@ class AudioForecaster(nn.Module):
             # Apply fidelity decay weight
             if fidelity_decay:
                 # Weight decreases for higher codebooks and later time steps
-                cb_weight = 1.0 / (cb_idx + 1)  # CB0=1.0, CB1=0.5, CB2=0.33...
+                # cb_weight = 1.0 / (cb_idx + 1)  # CB0=1.0, CB1=0.5, CB2=0.33...
+                cb_weight = math.exp(-0.1 * cb_idx)  # exponential ?
                 total_loss += cb_weight * cb_loss
             else:
                 total_loss += cb_loss

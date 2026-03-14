@@ -13,7 +13,6 @@ dependencies = [
   "transformers>=4.57.1",
   "datasets>=4.4.1",
   "torchview>=0.2.7",
-  "flax>=0.12.1",
   "torch-summary>=1.4.5",
   "torchinfo>=1.8.0",
   "descript-audio-codec>=1.0.0",
@@ -22,12 +21,12 @@ dependencies = [
   "soundfile>=0.13.1",
 ]
 
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
+#[[tool.uv.index]]
+#name = "pytorch-cpu"
+#url = "https://download.pytorch.org/whl/cpu"
+#explicit = true
 
-[tool.uv.sources]
-torch = [{ index = "pytorch-cpu" }]
-torchvision = [{ index = "pytorch-cpu" }]
-torchaudio = [{ index = "pytorch-cpu" }]
+#[tool.uv.sources]
+#torch = [{ index = "pytorch-cpu" }]
+#torchvision = [{ index = "pytorch-cpu" }]
+#torchaudio = [{ index = "pytorch-cpu" }]

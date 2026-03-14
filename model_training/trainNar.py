@@ -1,26 +1,16 @@
-"""
-train.py - Fixed training loop for AudioForecaster
-
-Key fixes:
-1. Model forward() only takes past_tokens (not future tokens as targets)
-2. Use get_training_loss() for proper loss computation with fidelity decay
-3. Use predict() instead of generate() for inference
-4. Fix shape handling: model expects (batch, time, codebooks)
-5. Ensure attention mask is on correct device
-6. Match config values to model initialization
-"""
-
 import sys
 import os
 import time
+import math
 from pathlib import Path
+from transformers import get_linear_schedule_with_warmup
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from narTransformer.narTrans import AudioForecaster  # Your model file
+from narTransformer.narTrans import AudioForecaster
 from model_training.dataloader.raw_dataset import RawAudioDataset
 from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
 
@@ -34,7 +24,7 @@ print(f"Using device: {device}")
 
 # DAC token rate: ~86 Hz at 24kHz, or ~50 Hz if downsampled
 # Adjust based on your tokenizer's actual output rate
-TOKEN_RATE = 50  # tokens per second
+TOKEN_RATE = 100  # tokens per second
 
 # Training configuration
 config = {
@@ -46,13 +36,14 @@ config = {
     "n_codebooks": 8,  # DAC RVQ layers
     "d_model": 512,
     "n_heads": 8,
-    "n_layers": 6,
-    "d_ff": 2048,
-    "dropout": 0.1,
+    "n_layers": 4,
+    "d_ff": 1024,
+    "dropout": 0.15,
     # Training
-    "batch_size": 2,
-    "learning_rate": 3e-4,
+    "batch_size": 8,
+    "learning_rate": 5e-4,
     "num_epochs": 100,
+    "num_warmup_epochs": 2,
     "gradient_clip": 1.0,
     # Data
     "audio_dir": "dataset_gen/rotormotor/mp3s_small",
@@ -102,12 +93,61 @@ model = AudioForecaster(
     dropout=config["dropout"],
     device=device,  # Pass device so mask buffer is created on correct device
 )
+
 model.to(device)
 
 # Optimizer
 optimizer = torch.optim.AdamW(
     model.parameters(), lr=config["learning_rate"], weight_decay=0.01
 )
+
+total_batches = len(dataloader)
+num_training_steps = total_batches * config["num_epochs"]
+num_warmup_steps = total_batches * config["num_warmup_epochs"]
+
+print(f"Total training steps: {num_training_steps}")
+print(f"Total warmup steps: {num_warmup_steps}")
+
+# Create the learning rate scheduler
+scheduler = get_linear_schedule_with_warmup(
+    optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps
+)
+
+
+# Define warmup and total steps
+# Let's say we want to warm up for the first 5% of the total training steps
+num_warmup_steps = int(0.05 * (len(dataloader) * config["num_epochs"]))
+num_training_steps = len(dataloader) * config["num_epochs"]
+
+# Create a scheduler
+# A cosine scheduler with warmup is a very robust choice
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    optimizer,
+    T_max=num_training_steps - num_warmup_steps,
+    eta_min=1e-6,  # Don't let the LR go to zero
+)
+
+
+# You'll need a library like `transformers` for an easy warmup scheduler,
+# or you can implement a simple one. Here's a manual way:
+def get_lr(current_step):
+    if current_step < num_warmup_steps:
+        # Linear warmup
+        return (
+            config["learning_rate"]
+            * float(current_step)
+            / float(max(1, num_warmup_steps))
+        )
+    # After warmup, use the cosine scheduler
+    progress = float(current_step - num_warmup_steps) / float(
+        max(1, num_training_steps - num_warmup_steps)
+    )
+    return (
+        max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+        * (config["learning_rate"] - 1e-6)
+        + 1e-6
+    )
+
 
 # TensorBoard
 writer = SummaryWriter(log_dir=f"runs/{MODEL_NAME}")
@@ -196,6 +236,31 @@ for epoch in range(config["num_epochs"]):
 
         optimizer.step()
 
+        # print("--- Data Sanity Check ---")
+        # print(f"Raw audio shape: {raw_audio_gpu.shape}")
+        # print(
+        #     f"Raw audio stats: min={raw_audio_gpu.min():.2f}, max={raw_audio_gpu.max():.2f}, mean={raw_audio_gpu.mean():.2f}"
+        # )
+
+        # print(f"Tokens shape (after tokenizer): {tokens.shape}")
+        # print(
+        #     f"Token stats: min={tokens.min()}, max={tokens.max()}, unique={tokens.unique().numel()}"
+        # )
+        # # This is CRITICAL. Are tokens out of the expected range [0, vocab_size-1]?
+        # if tokens.max() >= config["vocab_size"] or tokens.min() < 0:
+        #     print("!!! CRITICAL ERROR: TOKENS ARE OUT OF VOCAB RANGE !!!")
+        #     # You can add a breakpoint here to inspect
+        #     # import pdb; pdb.set_trace()
+
+        # print(f"Past tokens shape: {past_tokens.shape}")
+        # print(f"Future tokens shape: {future_tokens.shape}")
+        # print("------------------------\n")
+
+        # You can stop the training after the first batch to see this output
+        if global_step == 0:
+            # import sys; sys.exit()
+            pass
+
         # =====================================================================
         # 7. Logging
         # =====================================================================
@@ -235,8 +300,8 @@ for epoch in range(config["num_epochs"]):
                 # Decode to waveform (use only high-fidelity codebooks for first 2s)
                 # For thesis: you might want to decode only codebooks 0-3 for immediate audio
                 high_fidelity_tokens = predictions[
-                    :, : int(2 * TOKEN_RATE), :4
-                ]  # First 2s, first 4 codebooks
+                    :, : int(config["future_len"]), :4
+                ]  # first 4 codebooks
 
                 if high_fidelity_tokens.numel() > 0:
                     try:
@@ -251,7 +316,7 @@ for epoch in range(config["num_epochs"]):
                         )
 
                         # Also log ground truth for comparison
-                        gt_tokens = future_tokens[:, : int(2 * TOKEN_RATE), :4]
+                        gt_tokens = future_tokens[:, : int(config["future_len"]), :4]
                         gt_waveform = tokenizer.decode_to_waveform(
                             gt_tokens.transpose(1, 2)
                         )

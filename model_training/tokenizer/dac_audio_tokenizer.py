@@ -8,7 +8,6 @@ from .tokenizer import AudioTokenizer
 
 model_type = "24khz"  # or "44khz"
 SAMPLE_RATE = 24000 if model_type == "24khz" else 44000
-SAMPLES_PER_FRAME = 1920
 
 
 class DACAudioTokenizer(AudioTokenizer):
