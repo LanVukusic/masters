@@ -11,6 +11,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from narTransformer.narTrans import AudioForecaster
+from simpleModel.simple import AudioContinuationTransformer
 from model_training.dataloader.raw_dataset import RawAudioDataset
 from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
 
@@ -29,8 +30,8 @@ TOKEN_RATE = 100  # tokens per second
 # Training configuration
 config = {
     # Sequence lengths (in tokens, not seconds)
-    "past_len": int(5 * TOKEN_RATE),  # 5 seconds of context
-    "future_len": int(10 * TOKEN_RATE),  # 10 seconds to predict
+    "past_len": int(2 * TOKEN_RATE),  # 5 seconds of context
+    "future_len": int(2 * TOKEN_RATE),  # 10 seconds to predict
     # Model architecture
     "vocab_size": 1024,  # DAC codebook size
     "n_codebooks": 8,  # DAC RVQ layers
@@ -41,7 +42,7 @@ config = {
     "dropout": 0.15,
     # Training
     "batch_size": 8,
-    "learning_rate": 5e-4,
+    "learning_rate": 2e-4,
     "num_epochs": 100,
     "num_warmup_epochs": 2,
     "gradient_clip": 1.0,
@@ -81,19 +82,20 @@ dataloader = DataLoader(
 print(f"Dataset: {len(dataset.audio_files)} files, {len(dataset)} chunks")
 
 # Model - initialize with config values
-model = AudioForecaster(
-    vocab_size=config["vocab_size"],
-    d_model=config["d_model"],
-    n_heads=config["n_heads"],
-    n_layers=config["n_layers"],
-    d_ff=config["d_ff"],
-    n_codebooks=config["n_codebooks"],
-    past_len=config["past_len"],
-    future_len=config["future_len"],
-    dropout=config["dropout"],
-    device=device,  # Pass device so mask buffer is created on correct device
-)
+# model = AudioForecaster(
+#     vocab_size=config["vocab_size"],
+#     d_model=config["d_model"],
+#     n_heads=config["n_heads"],
+#     n_layers=config["n_layers"],
+#     d_ff=config["d_ff"],
+#     n_codebooks=config["n_codebooks"],
+#     past_len=config["past_len"],
+#     future_len=config["future_len"],
+#     dropout=config["dropout"],
+#     device=device,  # Pass device so mask buffer is created on correct device
+# )
 
+model = AudioContinuationTransformer(config)
 model.to(device)
 
 # Optimizer
@@ -126,27 +128,6 @@ scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
     T_max=num_training_steps - num_warmup_steps,
     eta_min=1e-6,  # Don't let the LR go to zero
 )
-
-
-# You'll need a library like `transformers` for an easy warmup scheduler,
-# or you can implement a simple one. Here's a manual way:
-def get_lr(current_step):
-    if current_step < num_warmup_steps:
-        # Linear warmup
-        return (
-            config["learning_rate"]
-            * float(current_step)
-            / float(max(1, num_warmup_steps))
-        )
-    # After warmup, use the cosine scheduler
-    progress = float(current_step - num_warmup_steps) / float(
-        max(1, num_training_steps - num_warmup_steps)
-    )
-    return (
-        max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
-        * (config["learning_rate"] - 1e-6)
-        + 1e-6
-    )
 
 
 # TensorBoard
@@ -207,22 +188,23 @@ for epoch in range(config["num_epochs"]):
         # =====================================================================
         max_val = config["vocab_size"] - 1
         if past_tokens.max() > max_val or past_tokens.min() < 0:
-            print("Warning: Past tokens out of range, clamping")
-            past_tokens = torch.clamp(past_tokens, 0, max_val)
+            print("Warning: Past tokens out of range")
+            os.exit(1)
+            # past_tokens = torch.clamp(past_tokens, 0, max_val)
         if future_tokens.max() > max_val or future_tokens.min() < 0:
-            print("Warning: Future tokens out of range, clamping")
-            future_tokens = torch.clamp(future_tokens, 0, max_val)
+            print("Warning: Future tokens out of range")
+            os.exit(1)
+            # future_tokens = torch.clamp(future_tokens, 0, max_val)
 
         # =====================================================================
         # 5. Forward pass + Loss
         # =====================================================================
         optimizer.zero_grad()
 
-        # Use the model's built-in loss function with fidelity decay
+        # Use the model's built-in loss function
         loss = model.get_training_loss(
             past_tokens=past_tokens,
             future_tokens=future_tokens,
-            fidelity_decay=config["use_fidelity_decay"],
         )
 
         # =====================================================================
@@ -236,31 +218,6 @@ for epoch in range(config["num_epochs"]):
 
         optimizer.step()
 
-        # print("--- Data Sanity Check ---")
-        # print(f"Raw audio shape: {raw_audio_gpu.shape}")
-        # print(
-        #     f"Raw audio stats: min={raw_audio_gpu.min():.2f}, max={raw_audio_gpu.max():.2f}, mean={raw_audio_gpu.mean():.2f}"
-        # )
-
-        # print(f"Tokens shape (after tokenizer): {tokens.shape}")
-        # print(
-        #     f"Token stats: min={tokens.min()}, max={tokens.max()}, unique={tokens.unique().numel()}"
-        # )
-        # # This is CRITICAL. Are tokens out of the expected range [0, vocab_size-1]?
-        # if tokens.max() >= config["vocab_size"] or tokens.min() < 0:
-        #     print("!!! CRITICAL ERROR: TOKENS ARE OUT OF VOCAB RANGE !!!")
-        #     # You can add a breakpoint here to inspect
-        #     # import pdb; pdb.set_trace()
-
-        # print(f"Past tokens shape: {past_tokens.shape}")
-        # print(f"Future tokens shape: {future_tokens.shape}")
-        # print("------------------------\n")
-
-        # You can stop the training after the first batch to see this output
-        if global_step == 0:
-            # import sys; sys.exit()
-            pass
-
         # =====================================================================
         # 7. Logging
         # =====================================================================
@@ -270,16 +227,15 @@ for epoch in range(config["num_epochs"]):
         # Log metrics every N batches
         if batch_idx % config["log_metrics_every"] == 0:
             writer.add_scalar("Train/Loss", loss.item(), global_step)
-            writer.add_scalar("Train/LR", optimizer.param_groups[0]["lr"], global_step)
+            writer.add_scalar("Train/LR", scheduler.get_lr(), global_step)
 
             # Gradient norm
-            grad_norm = (
+            grad_norm = torch.sqrt(
                 sum(
-                    p.grad.norm().item() ** 2
+                    torch.square(p.grad.norm().item())
                     for p in model.parameters()
                     if p.grad is not None
                 )
-                ** 0.5
             )
             writer.add_scalar("Train/GradNorm", grad_norm, global_step)
 
@@ -333,42 +289,42 @@ for epoch in range(config["num_epochs"]):
 
         global_step += 1
 
-    # =====================================================================
-    # Epoch Summary
-    # =====================================================================
-    if valid_batches > 0:
-        avg_loss = epoch_loss / valid_batches
-        print(f"Epoch {epoch + 1}/{config['num_epochs']} | Avg Loss: {avg_loss:.4f}")
+    # # =====================================================================
+    # # Epoch Summary
+    # # =====================================================================
+    # if valid_batches > 0:
+    #     avg_loss = epoch_loss / valid_batches
+    #     print(f"Epoch {epoch + 1}/{config['num_epochs']} | Avg Loss: {avg_loss:.4f}")
 
-        writer.add_scalar("Epoch/AvgLoss", avg_loss, epoch)
+    #     writer.add_scalar("Epoch/AvgLoss", avg_loss, epoch)
 
-        # Save checkpoint every 10 epochs
-        if (epoch + 1) % 10 == 0:
-            checkpoint = {
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "loss": avg_loss,
-                "config": config,
-            }
-            save_path = f"checkpoints/{MODEL_NAME}_epoch{epoch + 1}.pt"
-            Path("checkpoints").mkdir(exist_ok=True)
-            torch.save(checkpoint, save_path)
-            print(f"Checkpoint saved: {save_path}")
-    else:
-        print(f"Epoch {epoch + 1}: No valid batches processed")
+    #     # Save checkpoint every 10 epochs
+    #     if (epoch + 1) % 10 == 0:
+    #         checkpoint = {
+    #             "epoch": epoch,
+    #             "model_state_dict": model.state_dict(),
+    #             "optimizer_state_dict": optimizer.state_dict(),
+    #             "loss": avg_loss,
+    #             "config": config,
+    #         }
+    #         save_path = f"checkpoints/{MODEL_NAME}_epoch{epoch + 1}.pt"
+    #         Path("checkpoints").mkdir(exist_ok=True)
+    #         torch.save(checkpoint, save_path)
+    #         print(f"Checkpoint saved: {save_path}")
+    # else:
+    #     print(f"Epoch {epoch + 1}: No valid batches processed")
 
 # =============================================================================
 # Cleanup
 # =============================================================================
 writer.close()
 
-# Final save
-torch.save(
-    {
-        "model_state_dict": model.state_dict(),
-        "config": config,
-    },
-    f"checkpoints/{MODEL_NAME}_final.pt",
-)
-print(f"Final model saved: checkpoints/{MODEL_NAME}_final.pt")
+# # Final save
+# torch.save(
+#     {
+#         "model_state_dict": model.state_dict(),
+#         "config": config,
+#     },
+#     f"checkpoints/{MODEL_NAME}_final.pt",
+# )
+# print(f"Final model saved: checkpoints/{MODEL_NAME}_final.pt")
