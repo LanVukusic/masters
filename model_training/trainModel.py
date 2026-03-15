@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from narTransformer.narTrans import AudioForecaster
-from simpleModel.simple import AudioContinuationTransformer
+from simpleModel.simple_v2 import AudioContinuationTransformer
 from model_training.dataloader.raw_dataset import RawAudioDataset
 from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
 
@@ -19,7 +19,7 @@ from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
 # Configuration
 # =============================================================================
 
-MODEL_NAME = f"audio_NAR_{time.strftime('%d-%H%M')}"
+MODEL_NAME = f"audio_AUTOREG_{time.strftime('%d-%H%M')}"
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
@@ -31,23 +31,23 @@ TOKEN_RATE = 100  # tokens per second
 config = {
     # Sequence lengths (in tokens, not seconds)
     "past_len": int(2 * TOKEN_RATE),  # 5 seconds of context
-    "future_len": int(2 * TOKEN_RATE),  # 10 seconds to predict
+    "future_len": int(3 * TOKEN_RATE),  # 10 seconds to predict
     # Model architecture
     "vocab_size": 1024,  # DAC codebook size
     "n_codebooks": 8,  # DAC RVQ layers
     "d_model": 512,
     "n_heads": 8,
     "n_layers": 4,
-    "d_ff": 1024,
-    "dropout": 0.15,
+    "d_ff": 512,
+    "dropout": 0.1,
     # Training
-    "batch_size": 8,
-    "learning_rate": 2e-4,
-    "num_epochs": 100,
-    "num_warmup_epochs": 2,
-    "gradient_clip": 1.0,
+    "batch_size": 16,
+    "learning_rate": 3e-4,
+    "num_epochs": 2,
+    "num_warmup_epochs": 1,
+    "gradient_clip": 0.0,
     # Data
-    "audio_dir": "dataset_gen/rotormotor/mp3s_small",
+    "audio_dir": "dataset_gen/rotormotor/mp3s",
     "tokenizer_type": "DAC",
     # Logging
     "log_audio_every": 150,  # batches
@@ -70,16 +70,21 @@ dataset = RawAudioDataset(
     cache_size=3,
 )
 
+# Limit dataset size for faster training (remove this for full training)
+max_samples = 500
+if len(dataset) > max_samples:
+    dataset = torch.utils.data.Subset(dataset, list(range(max_samples)))
+    print(f"Limited dataset to {max_samples} samples for faster training")
+
 dataloader = DataLoader(
     dataset,
     batch_size=config["batch_size"],
     shuffle=True,  # Shuffle for training
-    num_workers=4,
+    num_workers=0,  # Reduce for stability with on-the-fly tokenization
     pin_memory=True,
-    persistent_workers=True,
 )
 
-print(f"Dataset: {len(dataset.audio_files)} files, {len(dataset)} chunks")
+print(f"Dataset: {len(dataset)} chunks")
 
 # Model - initialize with config values
 # model = AudioForecaster(
@@ -110,23 +115,9 @@ num_warmup_steps = total_batches * config["num_warmup_epochs"]
 print(f"Total training steps: {num_training_steps}")
 print(f"Total warmup steps: {num_warmup_steps}")
 
-# Create the learning rate scheduler
+# Create a scheduler with warmup
 scheduler = get_linear_schedule_with_warmup(
     optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps
-)
-
-
-# Define warmup and total steps
-# Let's say we want to warm up for the first 5% of the total training steps
-num_warmup_steps = int(0.05 * (len(dataloader) * config["num_epochs"]))
-num_training_steps = len(dataloader) * config["num_epochs"]
-
-# Create a scheduler
-# A cosine scheduler with warmup is a very robust choice
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-    optimizer,
-    T_max=num_training_steps - num_warmup_steps,
-    eta_min=1e-6,  # Don't let the LR go to zero
 )
 
 
@@ -154,10 +145,15 @@ for epoch in range(config["num_epochs"]):
         # 1. Tokenize audio (no gradients needed)
         # =====================================================================
         with torch.no_grad():
-            # encode_from_waveform should return: (batch, codebooks, time)
-            tokens = tokenizer.encode_from_waveform(
-                raw_audio_gpu, original_sampling_rate=tokenizer.sampling_rate
-            )
+            raw_audio_gpu = raw_audio_gpu.squeeze(1)
+            tokens_list = []
+            for i in range(raw_audio_gpu.shape[0]):
+                single_audio = raw_audio_gpu[i : i + 1]
+                codes = tokenizer.encode_from_waveform(
+                    single_audio, original_sampling_rate=tokenizer.sampling_rate
+                )
+                tokens_list.append(codes)
+            tokens = torch.cat(tokens_list, dim=0)
 
         # tokens shape: [batch, n_codebooks, total_time]
         batch_size_curr, n_cb, total_time = tokens.shape
@@ -217,6 +213,7 @@ for epoch in range(config["num_epochs"]):
             torch.nn.utils.clip_grad_norm_(model.parameters(), config["gradient_clip"])
 
         optimizer.step()
+        scheduler.step()
 
         # =====================================================================
         # 7. Logging
@@ -227,12 +224,12 @@ for epoch in range(config["num_epochs"]):
         # Log metrics every N batches
         if batch_idx % config["log_metrics_every"] == 0:
             writer.add_scalar("Train/Loss", loss.item(), global_step)
-            writer.add_scalar("Train/LR", scheduler.get_lr(), global_step)
+            writer.add_scalar("Train/LR", scheduler.get_last_lr()[0], global_step)
 
             # Gradient norm
-            grad_norm = torch.sqrt(
+            grad_norm = math.sqrt(
                 sum(
-                    torch.square(p.grad.norm().item())
+                    p.grad.norm().item() ** 2
                     for p in model.parameters()
                     if p.grad is not None
                 )
