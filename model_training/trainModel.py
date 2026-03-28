@@ -2,7 +2,6 @@ import sys
 import os
 import time
 import math
-from pathlib import Path
 from transformers import get_linear_schedule_with_warmup
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -45,7 +44,7 @@ config = {
     "d_ff": 256,
     "dropout": 0.1,
     # Training
-    "batch_size": 14,
+    "batch_size": 1,
     "learning_rate": 3e-3,
     "num_epochs": 20,
     "num_warmup_epochs": 2,
