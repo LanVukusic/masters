@@ -1,7 +1,7 @@
 {
   "config": {
-    "checkpoint_path": null,
-    "audio_file": "100066 Lindstrom - Monsteer (Original Mix).mp3",
+    "checkpoint_path": "checkpoints/audio_AUTOREG_29-0025_mid.pt",
+    "audio_file": "1362355 Broady Champs - Hard!!!!!!!!! (Original Mix).mp3",
     "step_seconds": 0.5,
     "predict_seconds": 1.0,
     "past_seconds": 2.0,
@@ -13,29 +13,29 @@
   },
   "summary": {
     "total_windows": 20,
-    "audio_duration_sec": 123.75,
-    "total_evaluation_time_sec": 117.59,
-    "mean_loss": 55.4837,
-    "mean_accuracy": 0.0013,
-    "mean_inference_time_ms": 1234.1,
-    "min_inference_time_ms": 1067.38,
-    "max_inference_time_ms": 1432.99,
+    "audio_duration_sec": 123.76,
+    "total_evaluation_time_sec": 77.82,
+    "mean_loss": 51.5538,
+    "mean_accuracy": 0.0018,
+    "mean_inference_time_ms": 583.2,
+    "min_inference_time_ms": 510.64,
+    "max_inference_time_ms": 909.54,
     "per_codebook_loss": [
-      55.6671,
-      55.4213,
-      55.0517,
-      55.7596,
-      55.2124,
-      55.894,
-      55.2595
+      51.3482,
+      51.5093,
+      51.5085,
+      51.4983,
+      51.901,
+      52.0843,
+      52.4494
     ],
     "per_codebook_accuracy": [
-      0.0042,
+      0.0035,
       0.0007,
-      0.0007,
-      0.0007,
-      0.0007,
-      0.0007,
+      0.0035,
+      0.0021,
+      0.0014,
+      0.0,
       0.0014
     ]
   },
@@ -43,41 +43,41 @@
     {
       "window_idx": 0,
       "position_sec": 0.0,
-      "loss": 58.1487,
-      "accuracy": 0.0,
+      "loss": 51.9916,
+      "accuracy": 0.006,
       "per_codebook_loss": [
-        59.1378,
-        56.4573,
-        60.4746,
-        57.9161,
-        55.7131,
-        58.3137,
-        55.5312
+        53.4357,
+        51.3715,
+        52.5287,
+        48.5205,
+        51.3333,
+        52.4737,
+        51.9446
       ],
       "per_codebook_accuracy": [
         0.0,
+        0.0139,
+        0.0139,
         0.0,
-        0.0,
-        0.0,
-        0.0,
+        0.0139,
         0.0,
         0.0
       ],
-      "inference_time_ms": 1371.91
+      "inference_time_ms": 521.93
     },
     {
       "window_idx": 1,
       "position_sec": 0.49,
-      "loss": 54.8549,
+      "loss": 50.9884,
       "accuracy": 0.0,
       "per_codebook_loss": [
-        55.8627,
-        53.6936,
-        55.3092,
-        55.6105,
-        52.0137,
-        55.9282,
-        53.3673
+        52.4096,
+        50.8375,
+        49.4287,
+        48.8577,
+        50.7999,
+        51.9523,
+        51.5228
       ],
       "per_codebook_accuracy": [
         0.0,
@@ -88,21 +88,21 @@
         0.0,
         0.0
       ],
-      "inference_time_ms": 1340.39
+      "inference_time_ms": 513.89
     },
     {
       "window_idx": 2,
       "position_sec": 0.99,
-      "loss": 55.1967,
+      "loss": 52.8451,
       "accuracy": 0.0,
       "per_codebook_loss": [
-        55.7123,
-        55.1783,
-        54.26,
-        55.6021,
-        52.9361,
-        56.6193,
-        56.2241
+        54.6723,
+        54.373,
+        48.8566,
+        51.6485,
+        49.6181,
+        53.1631,
+        54.4543
       ],
       "per_codebook_accuracy": [
         0.0,
@@ -113,49 +113,49 @@
         0.0,
         0.0
       ],
-      "inference_time_ms": 1226.17
+      "inference_time_ms": 515.59
     },
     {
       "window_idx": 3,
       "position_sec": 1.48,
-      "loss": 56.1825,
-      "accuracy": 0.0,
+      "loss": 53.2875,
+      "accuracy": 0.004,
       "per_codebook_loss": [
-        58.059,
-        58.372,
-        56.1757,
-        50.0033,
-        54.9391,
-        54.5683,
-        50.0932
+        55.2076,
+        55.685,
+        49.001,
+        51.6807,
+        50.2378,
+        51.328,
+        54.2623
       ],
       "per_codebook_accuracy": [
         0.0,
         0.0,
-        0.0,
-        0.0,
+        0.0139,
+        0.0139,
         0.0,
         0.0,
         0.0
       ],
-      "inference_time_ms": 1105.2
+      "inference_time_ms": 512.65
     },
     {
       "window_idx": 4,
       "position_sec": 1.98,
-      "loss": 56.2319,
-      "accuracy": 0.002,
+      "loss": 52.3258,
+      "accuracy": 0.0,
       "per_codebook_loss": [
-        56.0617,
-        56.6598,
-        57.365,
-        55.134,
-        55.8722,
-        54.4559,
-        56.8855
+        51.7919,
+        55.1575,
+        49.372,
+        52.8611,
+        51.5563,
+        51.1313,
+        54.0356
       ],
       "per_codebook_accuracy": [
-        0.0139,
+        0.0,
         0.0,
         0.0,
         0.0,
@@ -163,49 +163,49 @@
         0.0,
         0.0
       ],
-      "inference_time_ms": 1075.53
+      "inference_time_ms": 513.68
     },
     {
       "window_idx": 5,
       "position_sec": 2.47,
-      "loss": 55.968,
-      "accuracy": 0.004,
+      "loss": 51.7183,
+      "accuracy": 0.002,
       "per_codebook_loss": [
-        56.9344,
-        54.4763,
-        54.5783,
-        59.3158,
-        55.1756,
-        56.6776,
-        53.2599
+        49.5797,
+        53.3282,
+        50.7032,
+        53.9066,
+        54.4581,
+        52.7861,
+        51.0506
       ],
       "per_codebook_accuracy": [
+        0.0139,
         0.0,
-        0.0139,
-        0.0139,
+        0.0,
         0.0,
         0.0,
         0.0,
         0.0
       ],
-      "inference_time_ms": 1079.14
+      "inference_time_ms": 655.71
     },
     {
       "window_idx": 6,
       "position_sec": 2.97,
-      "loss": 54.4325,
-      "accuracy": 0.0,
+      "loss": 50.9005,
+      "accuracy": 0.002,
       "per_codebook_loss": [
-        54.7231,
-        52.8348,
-        54.6398,
-        55.1723,
-        57.2816,
-        51.6163,
-        56.6573
+        49.7238,
+        49.905,
+        53.7995,
+        49.7272,
+        52.5934,
+        53.1579,
+        51.4932
       ],
       "per_codebook_accuracy": [
-        0.0,
+        0.0139,
         0.0,
         0.0,
         0.0,
@@ -213,21 +213,21 @@
         0.0,
         0.0
       ],
-      "inference_time_ms": 1155.28
+      "inference_time_ms": 515.54
     },
     {
       "window_idx": 7,
       "position_sec": 3.46,
-      "loss": 54.1379,
+      "loss": 51.7983,
       "accuracy": 0.0,
       "per_codebook_loss": [
-        54.5821,
-        54.666,
-        49.8852,
-        54.61,
-        55.8284,
-        57.1243,
-        55.8386
+        53.4941,
+        48.8014,
+        51.3324,
+        51.3955,
+        55.3198,
+        52.3067,
+        50.416
       ],
       "per_codebook_accuracy": [
         0.0,
@@ -238,21 +238,96 @@
         0.0,
         0.0
       ],
-      "inference_time_ms": 1096.52
+      "inference_time_ms": 516.13
     },
     {
       "window_idx": 8,
       "position_sec": 3.96,
-      "loss": 58.1087,
+      "loss": 52.0047,
+      "accuracy": 0.002,
+      "per_codebook_loss": [
+        52.1168,
+        50.966,
+        53.2179,
+        52.4329,
+        50.3352,
+        51.8335,
+        54.5841
+      ],
+      "per_codebook_accuracy": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0139
+      ],
+      "inference_time_ms": 515.87
+    },
+    {
+      "window_idx": 9,
+      "position_sec": 4.45,
+      "loss": 49.4281,
+      "accuracy": 0.004,
+      "per_codebook_loss": [
+        48.0507,
+        48.0202,
+        49.1818,
+        52.1636,
+        53.3196,
+        52.7295,
+        49.9063
+      ],
+      "per_codebook_accuracy": [
+        0.0,
+        0.0,
+        0.0139,
+        0.0139,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "inference_time_ms": 517.36
+    },
+    {
+      "window_idx": 10,
+      "position_sec": 4.95,
+      "loss": 52.9271,
+      "accuracy": 0.002,
+      "per_codebook_loss": [
+        52.3596,
+        51.481,
+        54.6447,
+        53.4057,
+        56.2916,
+        50.6241,
+        54.2293
+      ],
+      "per_codebook_accuracy": [
+        0.0,
+        0.0,
+        0.0139,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "inference_time_ms": 679.38
+    },
+    {
+      "window_idx": 11,
+      "position_sec": 5.44,
+      "loss": 51.9788,
       "accuracy": 0.0,
       "per_codebook_loss": [
-        59.2086,
-        58.7802,
-        55.2291,
-        57.3917,
-        58.1419,
-        59.2807,
-        57.1063
+        52.7912,
+        49.9614,
+        51.014,
+        53.9777,
+        51.2629,
+        52.9015,
+        55.4102
       ],
       "per_codebook_accuracy": [
         0.0,
@@ -263,196 +338,121 @@
         0.0,
         0.0
       ],
-      "inference_time_ms": 1067.38
+      "inference_time_ms": 909.54
     },
     {
-      "window_idx": 9,
-      "position_sec": 4.45,
-      "loss": 56.1865,
+      "window_idx": 12,
+      "position_sec": 5.94,
+      "loss": 50.7249,
+      "accuracy": 0.002,
+      "per_codebook_loss": [
+        49.2358,
+        51.8548,
+        54.8121,
+        49.2568,
+        49.2994,
+        47.9486,
+        50.7925
+      ],
+      "per_codebook_accuracy": [
+        0.0139,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "inference_time_ms": 863.67
+    },
+    {
+      "window_idx": 13,
+      "position_sec": 6.43,
+      "loss": 51.3885,
+      "accuracy": 0.002,
+      "per_codebook_loss": [
+        49.7966,
+        51.1805,
+        51.2801,
+        51.8414,
+        54.8579,
+        54.2998,
+        54.0495
+      ],
+      "per_codebook_accuracy": [
+        0.0,
+        0.0,
+        0.0,
+        0.0139,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "inference_time_ms": 657.69
+    },
+    {
+      "window_idx": 14,
+      "position_sec": 6.93,
+      "loss": 52.0096,
+      "accuracy": 0.002,
+      "per_codebook_loss": [
+        50.4922,
+        54.4666,
+        51.4061,
+        51.7389,
+        53.8168,
+        50.008,
+        52.7618
+      ],
+      "per_codebook_accuracy": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0139
+      ],
+      "inference_time_ms": 513.0
+    },
+    {
+      "window_idx": 15,
+      "position_sec": 7.42,
+      "loss": 48.5282,
       "accuracy": 0.006,
       "per_codebook_loss": [
-        56.9659,
-        56.6627,
-        53.6263,
-        55.3855,
-        55.978,
-        60.2414,
-        54.3603
+        48.1061,
+        46.9183,
+        48.5542,
+        50.6195,
+        49.273,
+        50.7849,
+        50.7448
       ],
       "per_codebook_accuracy": [
         0.0278,
         0.0,
         0.0,
         0.0,
-        0.0,
-        0.0,
-        0.0139
-      ],
-      "inference_time_ms": 1073.72
-    },
-    {
-      "window_idx": 10,
-      "position_sec": 4.95,
-      "loss": 56.6863,
-      "accuracy": 0.004,
-      "per_codebook_loss": [
-        57.1867,
-        57.1645,
-        56.5805,
-        60.0479,
-        50.1286,
-        56.5248,
-        53.8418
-      ],
-      "per_codebook_accuracy": [
-        0.0,
-        0.0,
-        0.0,
-        0.0,
         0.0139,
-        0.0,
-        0.0139
-      ],
-      "inference_time_ms": 1072.04
-    },
-    {
-      "window_idx": 11,
-      "position_sec": 5.44,
-      "loss": 53.9529,
-      "accuracy": 0.0,
-      "per_codebook_loss": [
-        54.7465,
-        51.9612,
-        55.8786,
-        50.7362,
-        54.4797,
-        57.4471,
-        54.3494
-      ],
-      "per_codebook_accuracy": [
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
         0.0,
         0.0
       ],
-      "inference_time_ms": 1109.11
-    },
-    {
-      "window_idx": 12,
-      "position_sec": 5.94,
-      "loss": 56.2615,
-      "accuracy": 0.002,
-      "per_codebook_loss": [
-        55.5162,
-        57.6393,
-        58.4318,
-        54.7829,
-        55.7426,
-        53.5375,
-        54.6214
-      ],
-      "per_codebook_accuracy": [
-        0.0139,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0
-      ],
-      "inference_time_ms": 1268.46
-    },
-    {
-      "window_idx": 13,
-      "position_sec": 6.43,
-      "loss": 56.0867,
-      "accuracy": 0.002,
-      "per_codebook_loss": [
-        57.3152,
-        54.8569,
-        54.4638,
-        57.8659,
-        54.9781,
-        54.7159,
-        58.7535
-      ],
-      "per_codebook_accuracy": [
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0139,
-        0.0
-      ],
-      "inference_time_ms": 1370.84
-    },
-    {
-      "window_idx": 14,
-      "position_sec": 6.93,
-      "loss": 54.6644,
-      "accuracy": 0.002,
-      "per_codebook_loss": [
-        54.9532,
-        53.8627,
-        54.5927,
-        56.6977,
-        54.0728,
-        54.1922,
-        53.2331
-      ],
-      "per_codebook_accuracy": [
-        0.0139,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0
-      ],
-      "inference_time_ms": 1381.76
-    },
-    {
-      "window_idx": 15,
-      "position_sec": 7.42,
-      "loss": 54.1321,
-      "accuracy": 0.002,
-      "per_codebook_loss": [
-        51.9563,
-        56.9822,
-        50.2775,
-        57.7626,
-        57.1121,
-        52.7428,
-        57.0411
-      ],
-      "per_codebook_accuracy": [
-        0.0,
-        0.0,
-        0.0,
-        0.0139,
-        0.0,
-        0.0,
-        0.0
-      ],
-      "inference_time_ms": 1432.99
+      "inference_time_ms": 564.96
     },
     {
       "window_idx": 16,
       "position_sec": 7.92,
-      "loss": 53.6149,
+      "loss": 52.276,
       "accuracy": 0.0,
       "per_codebook_loss": [
-        51.825,
-        53.5798,
-        53.9694,
-        55.5579,
-        53.6417,
-        57.4241,
-        56.3981
+        52.5747,
+        51.0999,
+        54.2198,
+        51.5119,
+        51.8272,
+        51.5321,
+        52.8455
       ],
       "per_codebook_accuracy": [
         0.0,
@@ -463,71 +463,46 @@
         0.0,
         0.0
       ],
-      "inference_time_ms": 1370.04
+      "inference_time_ms": 638.1
     },
     {
       "window_idx": 17,
       "position_sec": 8.41,
-      "loss": 55.7659,
-      "accuracy": 0.0,
-      "per_codebook_loss": [
-        54.0568,
-        56.5671,
-        58.6198,
-        53.1845,
-        59.1605,
-        54.8766,
-        55.509
-      ],
-      "per_codebook_accuracy": [
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0
-      ],
-      "inference_time_ms": 1351.0
-    },
-    {
-      "window_idx": 18,
-      "position_sec": 8.91,
-      "loss": 54.362,
+      "loss": 50.8557,
       "accuracy": 0.002,
       "per_codebook_loss": [
-        54.3562,
-        53.9217,
-        52.2997,
-        57.001,
-        53.9706,
-        55.8166,
-        56.6475
+        48.5866,
+        51.7009,
+        52.0411,
+        52.2826,
+        52.3975,
+        51.3046,
+        52.2293
       ],
       "per_codebook_accuracy": [
+        0.0,
+        0.0,
         0.0139,
         0.0,
         0.0,
         0.0,
-        0.0,
-        0.0,
         0.0
       ],
-      "inference_time_ms": 1360.37
+      "inference_time_ms": 517.08
     },
     {
-      "window_idx": 19,
-      "position_sec": 9.4,
-      "loss": 54.6994,
+      "window_idx": 18,
+      "position_sec": 8.91,
+      "loss": 50.9841,
       "accuracy": 0.0,
       "per_codebook_loss": [
-        54.1819,
-        54.1096,
-        54.3761,
-        55.4135,
-        57.0819,
-        55.7768,
-        55.4709
+        49.7181,
+        49.9422,
+        54.066,
+        51.6869,
+        49.6575,
+        54.684,
+        50.4807
       ],
       "per_codebook_accuracy": [
         0.0,
@@ -538,7 +513,32 @@
         0.0,
         0.0
       ],
-      "inference_time_ms": 1374.18
+      "inference_time_ms": 511.68
+    },
+    {
+      "window_idx": 19,
+      "position_sec": 9.4,
+      "loss": 52.114,
+      "accuracy": 0.0,
+      "per_codebook_loss": [
+        52.8213,
+        53.1351,
+        50.7101,
+        50.4493,
+        49.7643,
+        54.7363,
+        51.7748
+      ],
+      "per_codebook_accuracy": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "inference_time_ms": 510.64
     }
   ]
 }

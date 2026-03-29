@@ -12,6 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 from simpleModel.simple_v2 import AudioContinuationTransformer
 from model_training.dataloader.raw_dataset import RawAudioDataset
 from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
+from model_training.model_config import MODEL_CONFIG, TOKEN_RATE
 from utils.logging import (
     log_audio_samples,
     log_training_metrics,
@@ -26,26 +27,12 @@ MODEL_NAME = f"audio_AUTOREG_{time.strftime('%d-%H%M')}"
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-# DAC token rate: ~86 Hz at 24kHz, or ~50 Hz if downsampled
-# Adjust based on your tokenizer's actual output rate
-TOKEN_RATE = 100  # tokens per second
-
 # Training configuration
 config = {
-    # Sequence lengths (in tokens, not seconds)
-    "past_len": int(2 * TOKEN_RATE),  # 5 seconds of context
-    "future_len": int(3 * TOKEN_RATE),  # 10 seconds to predict
-    # Model architecture
-    "vocab_size": 1024,  # DAC codebook size
-    "n_codebooks": 7,  # DAC RVQ layers
-    "d_model": 256,
-    "n_heads": 8,
-    "n_layers": 3,
-    "d_ff": 256,
-    "dropout": 0.1,
+    **MODEL_CONFIG,
     # Training
     "batch_size": 1,
-    "learning_rate": 3e-3,
+    "learning_rate": 1e-2,
     "num_epochs": 20,
     "num_warmup_epochs": 2,
     "gradient_clip": 0.0,
@@ -290,6 +277,15 @@ for epoch in range(config["num_epochs"]):
 
         # Log audio samples periodically
         if global_step % config["log_audio_every"] == 0:
+            torch.save(
+                {
+                    "model_state_dict": model.state_dict(),
+                    "config": config,
+                },
+                f"checkpoints/{MODEL_NAME}_mid.pt",
+            )
+            print(f"mid model saved: checkpoints/{MODEL_NAME}_mid.pt")
+
             with torch.no_grad():
                 model.eval()
 

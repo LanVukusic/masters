@@ -14,6 +14,7 @@ sys.path.insert(
 
 from simpleModel.simple_v2 import AudioContinuationTransformer
 from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
+from model_training.model_config import MODEL_CONFIG
 from config import EvaluationConfig
 
 
@@ -41,15 +42,9 @@ class AudioContinuationEvaluator:
 
     def _load_model(self) -> AudioContinuationTransformer:
         config_dict = {
+            **MODEL_CONFIG,
             "past_len": self.past_len,
             "future_len": self.future_len,
-            "vocab_size": 1024,
-            "n_codebooks": 7,
-            "d_model": 256,
-            "n_heads": 8,
-            "n_layers": 3,
-            "d_ff": 256,
-            "dropout": 0.1,
         }
 
         if self.config.checkpoint_path and os.path.exists(self.config.checkpoint_path):
