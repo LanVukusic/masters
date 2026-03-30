@@ -10,20 +10,18 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from simpleModel.simple_v2 import AudioContinuationTransformer
-from model_training.dataloader.raw_dataset import RawAudioDataset
+# from model_training.dataloader.raw_dataset import RawAudioDataset
+from model_training.dataloader.IterableDataset import RawAudioDataset
 from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
-from model_training.model_config import MODEL_CONFIG, TOKEN_RATE
+from model_training.model_config import MODEL_CONFIG
 from utils.logging import (
     log_audio_samples,
     log_training_metrics,
     log_dj_waveform,
 )
 
-# =============================================================================
-# Configuration
-# =============================================================================
-
-MODEL_NAME = f"audio_AUTOREG_{time.strftime('%d-%H%M')}"
+SMALL = False
+MODEL_NAME = f"audio_AUTOREG_{time.strftime('%d-%H%M')}_{"sm" if SMALL else "big"}"
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
@@ -31,24 +29,25 @@ print(f"Using device: {device}")
 config = {
     **MODEL_CONFIG,
     # Training
-    "batch_size": 1,
-    "learning_rate": 1e-2,
+    "batch_size": 12,
+    "learning_rate": 1e-3,
     "num_epochs": 20,
-    "num_warmup_epochs": 2,
-    "gradient_clip": 0.0,
+    "num_warmup_steps": 30,
+    "gradient_clip": 30.0,
+    "training_steps": 500,
+
     # Data
-    "audio_dir": "dataset_gen/rotormotor/mp3s_small",
-    # "audio_dir": "dataset_gen/rotormotor/mp3s",
+    "audio_dir":  "dataset_gen/rotormotor/mp3s_small" if SMALL else "dataset_gen/rotormotor/mp3s",
     "tokenizer_type": "DAC",
     # Logging
-    "log_audio_every": 150,  # batches
+    "log_audio_every": 100,  # batches
     "log_metrics_every": 10,  # batches
     "log_exposure_every": 100,  # batches
     # Fidelity decay for training
     "use_fidelity_decay": True,
     # Progressive teacher forcing
     "use_progressive_tf": True,
-    "tf_warmup_steps": 500,  # Steps to go from full TF to no TF
+    "tf_warmup_steps": 400,  # Steps to go from full TF to no TF
 }
 
 # =============================================================================
@@ -65,21 +64,21 @@ dataset = RawAudioDataset(
     cache_size=3,
 )
 
-# Limit dataset size for faster training (remove this for full training)
-max_samples = 500
-if len(dataset) > max_samples:
-    dataset = torch.utils.data.Subset(dataset, list(range(max_samples)))
-    print(f"Limited dataset to {max_samples} samples for faster training")
+# # Limit dataset size for faster training (remove this for full training)
+# max_samples = 500
+# if len(dataset) > max_samples:
+#     dataset = torch.utils.data.Subset(dataset, list(range(max_samples)))
+#     print(f"Limited dataset to {max_samples} samples for faster training")
 
 dataloader = DataLoader(
     dataset,
     batch_size=config["batch_size"],
-    shuffle=True,  # Shuffle for training
-    num_workers=0,  # Reduce for stability with on-the-fly tokenization
+    # shuffle=True,  # Shuffle for training
+    num_workers=6,  # Reduce for stability with on-the-fly tokenization
     pin_memory=True,
 )
 
-print(f"Dataset: {len(dataset)} chunks")
+# print(f"Dataset: {len(dataset)} chunks")
 
 
 model = AudioContinuationTransformer(config)
@@ -90,9 +89,9 @@ optimizer = torch.optim.AdamW(
     model.parameters(), lr=config["learning_rate"], weight_decay=0.01
 )
 
-total_batches = len(dataloader)
-num_training_steps = total_batches * config["num_epochs"]
-num_warmup_steps = total_batches * config["num_warmup_epochs"]
+# total_batches = len(dataloader)
+num_training_steps = config["training_steps"]
+num_warmup_steps = config["num_warmup_steps"]
 
 print(f"Total training steps: {num_training_steps}")
 print(f"Total warmup steps: {num_warmup_steps}")
@@ -248,7 +247,7 @@ for epoch in range(config["num_epochs"]):
             )
 
             print(
-                f"Epoch {epoch + 1} | Batch {batch_idx} | Loss: {loss_val:.4f} | Grad: {grad_norm:.3f}"
+                f"Epoch {epoch + 1} | step: {global_step:.4f}  | Batch {batch_idx} | Loss: {loss_val:.4f} | Grad: {grad_norm:.3f}"
             )
 
         # log exposure by generating values autoregresivly twice - expensive

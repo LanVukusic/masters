@@ -19,15 +19,30 @@ dependencies = [
   "tensorboard>=2.20.0",
   "tqdm>=4.67.1",
   "soundfile>=0.13.1",
+  "ffmpeg>=1.4",
+  "nvidia-npp>=13.1.0.44",
 ]
 
+# CPU only
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
+# GPU
+[[tool.uv.index]]
+name = "pytorch-gpu"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+#[tool.uv.sources]
+#torch = [{ index = "pytorch-cpu" }]
+#torchvision = [{ index = "pytorch-cpu" }]
+#torchaudio = [{ index = "pytorch-cpu" }]
+#torchcodec = [{ index = "pytorch-cpu" }]
+
 [tool.uv.sources]
-torch = [{ index = "pytorch-cpu" }]
-torchvision = [{ index = "pytorch-cpu" }]
-torchaudio = [{ index = "pytorch-cpu" }]
+torch = [{ index = "pytorch-gpu" }]
+torchvision = [{ index = "pytorch-gpu" }]
+torchaudio = [{ index = "pytorch-gpu" }]
 torchcodec = [{ index = "pytorch-cpu" }]

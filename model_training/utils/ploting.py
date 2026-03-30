@@ -130,7 +130,7 @@ def create_spectrogram_comparison(
     gt_waveform, pred_waveform, step, sample_rate=16000, n_mels=96, width=500
 ):
     """Create spectrogram comparison figure for TensorBoard."""
-    fig = Figure(figsize=(12, 5), dpi=100)
+    fig = Figure(figsize=(12, 8), dpi=100)
     canvas = FigureCanvas(fig)
 
     # Generate spectrograms
@@ -138,12 +138,26 @@ def create_spectrogram_comparison(
     spec_pred = generate_spectrogram(pred_waveform, sample_rate, n_mels=n_mels)
 
     # Plot GT
-    ax1 = fig.add_subplot(211)
+    ax1 = fig.add_subplot(311)
     _plot_spectrogram(ax1, spec_gt, f"Ground Truth (Step {step})")
 
     # Plot Pred
-    ax2 = fig.add_subplot(212, sharex=ax1)
+    ax2 = fig.add_subplot(312, sharex=ax1)
     _plot_spectrogram(ax2, spec_pred, "Prediction")
+
+    # Plot Delta
+    ax3 = fig.add_subplot(313, sharex=ax1)
+    delta = spec_gt - spec_pred
+    import numpy as np
+
+    delta_np = delta.detach().cpu().numpy()
+    vmax = np.abs(delta_np).max()
+    ax3.imshow(
+        delta_np, origin="lower", aspect="auto", cmap="RdBu", vmin=-vmax, vmax=vmax
+    )
+    ax3.set_title("Delta (GT - Pred)")
+    ax3.set_xlabel("Time")
+    ax3.set_ylabel("Frequency")
 
     fig.tight_layout()
     return fig
