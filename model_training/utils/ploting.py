@@ -1,6 +1,5 @@
 import torch
 import torch.nn.functional as F
-import torchaudio
 import torchaudio.transforms as T
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas

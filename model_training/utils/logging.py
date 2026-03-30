@@ -91,6 +91,8 @@ def log_training_metrics(
     global_step: int,
     grad_norm: float | None = None,
     teacher_forcing_ratio: float | None = None,
+    logits: torch.Tensor | None = None,
+    predicted_tokens: list | None = None,
     log_memory: bool = True,
 ):
     """
@@ -103,6 +105,8 @@ def log_training_metrics(
         global_step: Current training step
         grad_norm: Current gradient norm (optional)
         teacher_forcing_ratio: Current teacher forcing ratio (optional)
+        logits: Model output logits for entropy calculation (optional)
+        predicted_tokens: List of predicted token IDs for unique token count (optional)
         log_memory: Whether to log CUDA memory usage
     """
     writer.add_scalar("Train/Loss", loss, global_step)
@@ -114,6 +118,16 @@ def log_training_metrics(
     if teacher_forcing_ratio is not None:
         writer.add_scalar(
             "Train/TeacherForcingRatio", teacher_forcing_ratio, global_step
+        )
+
+    if logits is not None:
+        writer.add_scalar(
+            "Metrics/Entropy", torch.special.entr(logits).mean().item(), global_step
+        )
+
+    if predicted_tokens is not None:
+        writer.add_scalar(
+            "Metrics/UniqueTokens", len(set(predicted_tokens)), global_step
         )
 
     if log_memory and torch.cuda.is_available():

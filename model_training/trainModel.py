@@ -228,6 +228,14 @@ for epoch in range(config["num_epochs"]):
             )
 
             tf_ratio_val = tf_ratio if config.get("use_progressive_tf", False) else None
+
+            logits = None
+            predicted_tokens = None
+            with torch.no_grad():
+                logits = model.forward(past_tokens, future_tokens)
+                probs = torch.softmax(logits, dim=-1)
+                predicted_tokens = logits.argmax(dim=-1).flatten().tolist()
+
             log_training_metrics(
                 writer=writer,
                 loss=loss_val,
@@ -235,6 +243,8 @@ for epoch in range(config["num_epochs"]):
                 global_step=global_step,
                 grad_norm=grad_norm,
                 teacher_forcing_ratio=tf_ratio_val,
+                logits=probs,
+                predicted_tokens=predicted_tokens,
             )
 
             print(
