@@ -1,7 +1,7 @@
 [project]
 name = "magistrska"
 version = "0.1.0"
-description = "Add your description here"
+description = "Masters - audio continuation"
 readme = "README.md"
 requires-python = "==3.12.*"
 dependencies = [
@@ -13,14 +13,14 @@ dependencies = [
   "transformers>=4.57.1",
   "datasets>=4.4.1",
   "torchview>=0.2.7",
-  "torch-summary>=1.4.5",
+  # "torch-summary>=1.4.5",
   "torchinfo>=1.8.0",
   "descript-audio-codec>=1.0.0",
   "tensorboard>=2.20.0",
   "tqdm>=4.67.1",
-  "soundfile>=0.13.1",
+  # "soundfile>=0.13.1",
   "ffmpeg>=1.4",
-  "nvidia-npp>=13.1.0.44",
+  # "nvidia-npp>=13.1.0.44",
 ]
 
 # CPU only
@@ -29,20 +29,30 @@ name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
-# GPU
 [[tool.uv.index]]
-name = "pytorch-gpu"
-url = "https://download.pytorch.org/whl/cu130"
+name = "pip"
+url = "https://pypi.org/simple"
 explicit = true
 
-#[tool.uv.sources]
-#torch = [{ index = "pytorch-cpu" }]
-#torchvision = [{ index = "pytorch-cpu" }]
-#torchaudio = [{ index = "pytorch-cpu" }]
-#torchcodec = [{ index = "pytorch-cpu" }]
-
 [tool.uv.sources]
-torch = [{ index = "pytorch-gpu" }]
-torchvision = [{ index = "pytorch-gpu" }]
-torchaudio = [{ index = "pytorch-gpu" }]
+torch = [{ index = "pytorch-cpu" }]
+torchvision = [{ index = "pytorch-cpu" }]
+torchaudio = [{ index = "pytorch-cpu" }]
 torchcodec = [{ index = "pytorch-cpu" }]
+ffmpeg = [{ index = "pip" }]
+
+
+# GPU
+# [[tool.uv.index]]
+# name = "pytorch-gpu"
+# url = "https://download.pytorch.org/whl/cu130"
+# explicit = true
+
+
+# [tool.uv.sources]
+# torch = [{ index = "pytorch-gpu" }]
+# torchvision = [{ index = "pytorch-gpu" }]
+# torchaudio = [{ index = "pytorch-gpu" }]
+# torchcodec = [{ index = "pytorch-cpu" }]
+# ffmpeg = [{ index = "pytorch-gpu" }]
+

@@ -62,6 +62,7 @@ dataset = RawAudioDataset(
     audio_dir=config["audio_dir"],
     num_chunks=config["past_len"] + config["future_len"],  # Total tokens needed
     cache_size=3,
+    shuffle=True
 )
 
 # # Limit dataset size for faster training (remove this for full training)
@@ -73,8 +74,7 @@ dataset = RawAudioDataset(
 dataloader = DataLoader(
     dataset,
     batch_size=config["batch_size"],
-    # shuffle=True,  # Shuffle for training
-    num_workers=6,  # Reduce for stability with on-the-fly tokenization
+    num_workers=2,  # Reduce for stability with on-the-fly tokenization
     pin_memory=True,
 )
 

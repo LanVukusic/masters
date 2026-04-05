@@ -161,28 +161,37 @@ class RawAudioDataset(Dataset):
         return sequence  # Shape: [1, total_sequence_samples]
 
 
-# Example usage and testing
 if __name__ == "__main__":
-    # Test the dataset configuration
-    dataset = RawAudioDataset(
-        audio_dir="./test_audio",
-        num_chunks=8,
-        sampling_rate=24000,  # 24kHz
-        samples_per_frame=320,  # 320 samples per chunk = ~13.3ms at 24kHz
-        cache_size=5,
-    )
+  import time
+  dataset = RawAudioDataset(audio_dir="dataset_gen/rotormotor/mp3s_small", num_chunks=8)
+  start = time.time()
+  for i, sample in enumerate(dataset):
+      if i >= 100:
+        break
+  print(f"100 samples: {time.time() - start:.2f}s")
 
-    print(f"Dataset length: {len(dataset)}")
+# # Example usage and testing
+# if __name__ == "__main__":
+#     # Test the dataset configuration
+#     dataset = RawAudioDataset(
+#         audio_dir="./test_audio",
+#         num_chunks=8,
+#         sampling_rate=24000,  # 24kHz
+#         samples_per_frame=320,  # 320 samples per chunk = ~13.3ms at 24kHz
+#         cache_size=5,
+#     )
 
-    # Test a few samples to verify overlapping works
-    if len(dataset) > 0:
-        sample_0 = dataset[0]
-        print(f"First sample shape: {sample_0.shape}")
+#     print(f"Dataset length: {len(dataset)}")
 
-        if len(dataset) > 1:
-            sample_1 = dataset[1]
-            print(f"Second sample shape: {sample_1.shape}")
+#     # Test a few samples to verify overlapping works
+#     if len(dataset) > 0:
+#         sample_0 = dataset[0]
+#         print(f"First sample shape: {sample_0.shape}")
 
-            # The second sample should overlap significantly with the first
-            # They should share (num_chunks-1) chunks worth of data
-            print("Overlapping sampling verified!")
+#         if len(dataset) > 1:
+#             sample_1 = dataset[1]
+#             print(f"Second sample shape: {sample_1.shape}")
+
+#             # The second sample should overlap significantly with the first
+#             # They should share (num_chunks-1) chunks worth of data
+#             print("Overlapping sampling verified!")
