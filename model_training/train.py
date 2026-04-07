@@ -9,7 +9,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from simpleModel.simple_v2 import AudioContinuationTransformer
+from models.simple import AudioContinuationTransformer
+from models.conformer.conformer import AudioContinuationConformer
+
 # from model_training.dataloader.raw_dataset import RawAudioDataset
 from model_training.dataloader.IterableDataset import RawAudioDataset
 from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
@@ -20,8 +22,11 @@ from utils.logging import (
     log_dj_waveform,
 )
 
-SMALL = False
-MODEL_NAME = f"audio_AUTOREG_{time.strftime('%d-%H%M')}_{"sm" if SMALL else "big"}"
+ADVANCED_LOGGING = False
+active_model = AudioContinuationConformer
+
+
+MODEL_NAME = f"{active_model.__name__}_{time.strftime('%d-%H%M')}"
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
@@ -29,15 +34,14 @@ print(f"Using device: {device}")
 config = {
     **MODEL_CONFIG,
     # Training
-    "batch_size": 12,
+    "batch_size": 2,
     "learning_rate": 1e-3,
     "num_epochs": 20,
     "num_warmup_steps": 30,
     "gradient_clip": 30.0,
     "training_steps": 500,
-
     # Data
-    "audio_dir":  "dataset_gen/rotormotor/mp3s_small" if SMALL else "dataset_gen/rotormotor/mp3s",
+    "audio_dir": "dataset_gen/rotormotor/mp3s",
     "tokenizer_type": "DAC",
     # Logging
     "log_audio_every": 100,  # batches
@@ -62,7 +66,7 @@ dataset = RawAudioDataset(
     audio_dir=config["audio_dir"],
     num_chunks=config["past_len"] + config["future_len"],  # Total tokens needed
     cache_size=3,
-    shuffle=True
+    shuffle=True,
 )
 
 # # Limit dataset size for faster training (remove this for full training)
@@ -81,7 +85,7 @@ dataloader = DataLoader(
 # print(f"Dataset: {len(dataset)} chunks")
 
 
-model = AudioContinuationTransformer(config)
+model = active_model(config)
 model.to(device)
 
 # Optimizer
@@ -119,6 +123,7 @@ for epoch in range(config["num_epochs"]):
     valid_batches = 0
 
     for batch_idx, raw_audio_batch in enumerate(dataloader):
+        iter_start_time = time.time()
         # Move raw audio to device
         raw_audio_gpu = raw_audio_batch.to(device, non_blocking=True)
 
@@ -251,7 +256,7 @@ for epoch in range(config["num_epochs"]):
             )
 
         # log exposure by generating values autoregresivly twice - expensive
-        if global_step % config["log_exposure_every"] == 0:
+        if global_step % config["log_exposure_every"] == 0 and ADVANCED_LOGGING:
             # 1. Run prediction with Teacher Forcing
             predictions = model.predict(
                 prompt_tokens=past_tokens,
@@ -285,7 +290,7 @@ for epoch in range(config["num_epochs"]):
             )
 
         # Log audio samples periodically
-        if global_step % config["log_audio_every"] == 0:
+        if global_step % config["log_audio_every"] == 0 and ADVANCED_LOGGING:
             torch.save(
                 {
                     "model_state_dict": model.state_dict(),
@@ -347,6 +352,10 @@ for epoch in range(config["num_epochs"]):
                     torch.cuda.empty_cache()
 
                 model.train()
+
+        iter_time = time.time() - iter_start_time
+        time_per_sample = iter_time / config["batch_size"]
+        print(f"{iter_time:.1f}s / iter - {time_per_sample:.2f}s / sample")
 
         global_step += 1
 
