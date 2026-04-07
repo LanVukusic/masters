@@ -42,10 +42,16 @@ torchcodec = [{ index = "pytorch-cpu" }]
 ffmpeg = [{ index = "pip" }]
 
 
-# GPU
+# GPU - NVIDIA
 # [[tool.uv.index]]
 # name = "pytorch-gpu"
 # url = "https://download.pytorch.org/whl/cu130"
+# explicit = true
+
+# GPU - ROCm
+# [[tool.uv.index]]
+# name = "pytorch-gpu"
+# url = "https://download.pytorch.org/whl/rocm6.4"
 # explicit = true
 
 
