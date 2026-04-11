@@ -35,42 +35,82 @@ def log_audio_samples(
         Tuple of (gt_waveform, pred_waveform) for further visualization (CPU tensors)
     """
     try:
+        sample_rate = tokenizer.sampling_rate
+
+        # Use all available codebooks for better quality
+        actual_codebooks = min(audio_log_level, future_tokens.shape[-1])
+
         # Log one-token prediction (using ground truth context)
-        one_token_tokens = predictions_one_token[:, :future_len, :audio_log_level]
+        one_token_tokens = predictions_one_token[:, :future_len, :actual_codebooks]
         waveform_one_token = tokenizer.decode_to_waveform(
             one_token_tokens.transpose(1, 2)
         )
+
+        # Handle decode output - might be list or tensor
+        if isinstance(waveform_one_token, list):
+            waveform_one_token = waveform_one_token[0]
+
+        # Ensure on CPU and correct shape for TensorBoard
+        if waveform_one_token.is_cuda:
+            waveform_one_token = waveform_one_token.cpu()
+
+        if waveform_one_token.dim() == 3:
+            waveform_one_token = waveform_one_token.squeeze(0)  # (1, T) -> (T,)
+        elif waveform_one_token.dim() == 2 and waveform_one_token.shape[0] > 1:
+            waveform_one_token = waveform_one_token.mean(dim=0)  # (C, T) -> (T,)
+
         writer.add_audio(
             "Audio/OneTokenPrediction",
-            waveform_one_token[0].cpu(),
+            waveform_one_token,
             global_step,
-            sample_rate=tokenizer.sampling_rate,
+            sample_rate=sample_rate,
         )
-        # Clear GPU memory immediately
         del waveform_one_token
 
         # Log full autoregressive prediction
-        autoreg_tokens = predictions_autoreg[:, :future_len, :audio_log_level]
+        autoreg_tokens = predictions_autoreg[:, :future_len, :actual_codebooks]
         waveform_autoreg = tokenizer.decode_to_waveform(autoreg_tokens.transpose(1, 2))
+
+        if isinstance(waveform_autoreg, list):
+            waveform_autoreg = waveform_autoreg[0]
+        if waveform_autoreg.is_cuda:
+            waveform_autoreg = waveform_autoreg.cpu()
+
+        if waveform_autoreg.dim() == 3:
+            waveform_autoreg = waveform_autoreg.squeeze(0)
+        elif waveform_autoreg.dim() == 2 and waveform_autoreg.shape[0] > 1:
+            waveform_autoreg = waveform_autoreg.mean(dim=0)
+
         writer.add_audio(
             "Audio/AutoregPrediction",
-            waveform_autoreg[0].cpu(),
+            waveform_autoreg,
             global_step,
-            sample_rate=tokenizer.sampling_rate,
+            sample_rate=sample_rate,
         )
 
         # Log ground truth
-        gt_tokens = future_tokens[:, :future_len, :audio_log_level]
+        gt_tokens = future_tokens[:, :future_len, :actual_codebooks]
         gt_waveform = tokenizer.decode_to_waveform(gt_tokens.transpose(1, 2))
+
+        if isinstance(gt_waveform, list):
+            gt_waveform = gt_waveform[0]
+        if gt_waveform.is_cuda:
+            gt_waveform = gt_waveform.cpu()
+
+        if gt_waveform.dim() == 3:
+            gt_waveform = gt_waveform.squeeze(0)
+        elif gt_waveform.dim() == 2 and gt_waveform.shape[0] > 1:
+            gt_waveform = gt_waveform.mean(dim=0)
+
         writer.add_audio(
             "Audio/GroundTruth",
-            gt_waveform[0].cpu(),
+            gt_waveform,
             global_step,
-            sample_rate=tokenizer.sampling_rate,
+            sample_rate=sample_rate,
         )
 
         # Return CPU copies for visualization
-        result = (gt_waveform[0].cpu(), waveform_autoreg[0].cpu())
+        result = (gt_waveform.clone(), waveform_autoreg.clone())
 
         # Clean up GPU tensors
         del autoreg_tokens, gt_tokens
@@ -78,6 +118,13 @@ def log_audio_samples(
             torch.cuda.empty_cache()
 
         return result
+
+    except Exception as e:
+        import traceback
+
+        print(f"Warning: Could not decode audio for logging: {e}")
+        traceback.print_exc()
+        return None, None
 
     except Exception as e:
         print(f"Warning: Could not decode audio for logging: {e}")
@@ -156,7 +203,7 @@ def log_dj_waveform(
     gt_waveform: torch.Tensor,
     pred_waveform: torch.Tensor,
     global_step: int,
-    sample_rate: int = 16000,
+    sample_rate: int = 24000,
     width: int = 500,
 ):
     """
@@ -167,7 +214,7 @@ def log_dj_waveform(
         gt_waveform: Ground truth waveform (CPU tensor)
         pred_waveform: Predicted waveform (CPU tensor)
         global_step: Current training step
-        sample_rate: Audio sample rate
+        sample_rate: Audio sample rate (default 24000 for DAC)
         width: Width for waveform generation
     """
     try:

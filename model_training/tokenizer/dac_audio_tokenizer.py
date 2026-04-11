@@ -45,6 +45,9 @@ class DACAudioTokenizer(AudioTokenizer):
         print(f"DAC Model loaded successfully on {self.device}")
         # self.sampling_rate = SAMPLE_RATE
 
+        # Cache for resamplers to avoid recreation on every call
+        self._resampler_cache = {}
+
     @property
     def frame_size(self):
         return 330
@@ -68,6 +71,15 @@ class DACAudioTokenizer(AudioTokenizer):
         else:
             return device
 
+    def _get_resampler(self, orig_freq: int, new_freq: int):
+        """Get cached resampler or create new one."""
+        key = (orig_freq, new_freq)
+        if key not in self._resampler_cache:
+            self._resampler_cache[key] = torchaudio.transforms.Resample(
+                orig_freq=orig_freq, new_freq=new_freq
+            )
+        return self._resampler_cache[key]
+
     def _prepare_audio(
         self, waveform: torch.Tensor, original_sampling_rate: int
     ) -> torch.Tensor:
@@ -75,7 +87,7 @@ class DACAudioTokenizer(AudioTokenizer):
         Prepare audio waveform for model input by resampling and normalizing.
 
         Args:
-            waveform: Input audio waveform [channels, samples]
+            waveform: Input audio waveform [channels, samples] or [batch, channels, samples]
             original_sampling_rate: Original sampling rate of the audio
 
         Returns:
@@ -83,14 +95,14 @@ class DACAudioTokenizer(AudioTokenizer):
         """
         # Resample the audio to the model's required sampling rate
         if original_sampling_rate != SAMPLE_RATE:
-            resampler = torchaudio.transforms.Resample(
-                orig_freq=original_sampling_rate, new_freq=SAMPLE_RATE
-            )
+            resampler = self._get_resampler(original_sampling_rate, SAMPLE_RATE)
             waveform = resampler(waveform)
 
-        # Convert to mono if stereo
-        if waveform.shape[0] > 1:
+        # Convert to mono if stereo (handle both [C, T] and [B, C, T])
+        if waveform.dim() == 2 and waveform.shape[0] > 1:
             waveform = torch.mean(waveform, dim=0, keepdim=True)
+        elif waveform.dim() == 3 and waveform.shape[1] > 1:
+            waveform = waveform.mean(dim=1, keepdim=True)
 
         return waveform
 
@@ -176,7 +188,7 @@ class DACAudioTokenizer(AudioTokenizer):
         Core encoding logic using DAC.
 
         Args:
-            waveform: Raw audio waveform [channels, samples]
+            waveform: Raw audio waveform [channels, samples] or [batch, channels, samples]
             original_sampling_rate: Original sampling rate of the audio
 
         Returns:
@@ -184,23 +196,20 @@ class DACAudioTokenizer(AudioTokenizer):
         """
         # Prepare the audio
         prepared_waveform = self._prepare_audio(waveform, original_sampling_rate)
-        # print("prettparing...")
 
-        # Convert torch tensor to numpy array
-        audio_np = prepared_waveform.squeeze().cpu().numpy()
+        # Determine if input is batched
+        if prepared_waveform.dim() == 2:
+            # Single sample [channels, samples] -> add batch dim
+            prepared_waveform = prepared_waveform.unsqueeze(0)
 
-        # Create AudioSignal object
-        signal = AudioSignal(audio_np, sample_rate=SAMPLE_RATE)
-
-        # Move signal to model's device
-        signal.to(self.model.device)
+        # Move to model device
+        prepared_waveform = prepared_waveform.to(self.model.device)
 
         # Preprocess and encode to get the actual codes
-        x = self.model.preprocess(signal.audio_data, signal.sample_rate)
+        x = self.model.preprocess(prepared_waveform, SAMPLE_RATE)
         z, codes, latents, _, _ = self.model.encode(x, n_quantizers=self.num_quantizers)
 
-        # codes   # [batch, n_quantizers, time_steps]
-        # print("prepared")
+        # codes: [batch, n_quantizers, time_steps]
         return codes
 
     def decode_from_codes(self, codes: torch.Tensor) -> torch.Tensor:

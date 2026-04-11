@@ -131,6 +131,11 @@ class AudioContinuationConformer(nn.Module):
         self.d_model = d_model
         self.num_layers = num_layers
 
+        max_len = self.past_len + self.future_len
+        self._causal_mask = None
+        self._causal_mask_len = 0
+        self._loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
+
     def forward(self, past_tokens, future_tokens=None):
         """
         past_tokens: (Batch, T_past, N_Codebooks)
@@ -157,7 +162,10 @@ class AudioContinuationConformer(nn.Module):
         x = x + self.pos_embedding[:, :T_total, :]
 
         if T_total > 1:
-            causal_mask = create_causal_mask(T_total, x.device)
+            if self._causal_mask is None or self._causal_mask_len != T_total:
+                self._causal_mask = create_causal_mask(T_total, x.device)
+                self._causal_mask_len = T_total
+            causal_mask = self._causal_mask
         else:
             causal_mask = None
 
@@ -180,14 +188,12 @@ class AudioContinuationConformer(nn.Module):
         """
         logits = self.forward(past_tokens, future_tokens)
 
-        loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
-
         total_loss = 0
         for cb_idx in range(self.n_codebooks):
             reshaped_logits = logits[:, :, cb_idx, :].reshape(-1, self.vocab_size)
             t = future_tokens[:, :, cb_idx].reshape(-1)
 
-            loss = loss_fn(reshaped_logits, t)
+            loss = self._loss_fn(reshaped_logits, t)
             weight = 0.7**cb_idx
             total_loss += weight * loss
 

@@ -34,24 +34,23 @@ print(f"Using device: {device}")
 config = {
     **MODEL_CONFIG,
     # Training
-    "batch_size": 16,
-    "learning_rate": 1e-2,
-    "num_epochs": 20,
-    "num_warmup_steps": 30,
+    "batch_size": 32,
+    "learning_rate": 1e-3,
+    "num_epochs": 5,
+    "num_warmup_steps": 200,
     "gradient_clip": 30.0,
-    "training_steps": 500,
+    "training_steps": 1e4,
     # Data
-    "audio_dir": "dataset_gen/free_music/mp3s",
+    "audio_dir": "dataset_gen/free_music/rotormotor/mp3s",
     "tokenizer_type": "DAC",
     # Logging
-    "log_audio_every": 100,  # batches
+    "log_audio_every": 50,  # batches
     "log_metrics_every": 10,  # batches
     "log_exposure_every": 100,  # batches
     # Fidelity decay for training
     "use_fidelity_decay": True,
-    # Progressive teacher forcing
-    "use_progressive_tf": True,
-    "tf_warmup_steps": 400,  # Steps to go from full TF to no TF
+    # Progressive teacher forcing - DISABLED (using standard CLM like MusicGen/AudioGen)
+    "use_progressive_tf": False,
 }
 
 # =============================================================================
@@ -122,6 +121,8 @@ for epoch in range(config["num_epochs"]):
     model.train()
     epoch_loss = 0.0
     valid_batches = 0
+    if global_step >= config["training_steps"]:
+        break
 
     for batch_idx, raw_audio_batch in enumerate(dataloader):
         iter_start_time = time.time()
@@ -133,14 +134,9 @@ for epoch in range(config["num_epochs"]):
         # =====================================================================
         with torch.no_grad():
             raw_audio_gpu = raw_audio_gpu.squeeze(1)
-            tokens_list = []
-            for i in range(raw_audio_gpu.shape[0]):
-                single_audio = raw_audio_gpu[i : i + 1]
-                codes = tokenizer.encode_from_waveform(
-                    single_audio, original_sampling_rate=tokenizer.sampling_rate
-                )
-                tokens_list.append(codes)
-            tokens = torch.cat(tokens_list, dim=0)
+            tokens = tokenizer.encode_from_waveform(
+                raw_audio_gpu, original_sampling_rate=tokenizer.sampling_rate
+            )
 
         # tokens shape: [batch, n_codebooks, total_time]
         batch_size_curr, n_cb, total_time = tokens.shape
@@ -334,7 +330,7 @@ for epoch in range(config["num_epochs"]):
                     predictions_autoreg=predictions_autoreg,
                     global_step=global_step,
                     future_len=config["future_len"],
-                    audio_log_level=4,
+                    audio_log_level=config["n_codebooks"],
                 )
 
                 # Log DJ waveform visualization
@@ -356,7 +352,8 @@ for epoch in range(config["num_epochs"]):
 
         iter_time = time.time() - iter_start_time
         time_per_sample = iter_time / config["batch_size"]
-        print(f"{iter_time:.1f}s / iter - {time_per_sample:.2f}s / sample")
+        if global_step % config["log_metrics_every"] == 0:
+            print(f"{iter_time:.1f}s / iter - {time_per_sample:.2f}s / sample")
 
         global_step += 1
 
