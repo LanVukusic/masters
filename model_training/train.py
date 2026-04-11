@@ -22,7 +22,7 @@ from utils.logging import (
     log_dj_waveform,
 )
 
-ADVANCED_LOGGING = False
+ADVANCED_LOGGING = True
 active_model = AudioContinuationConformer
 
 
@@ -34,14 +34,14 @@ print(f"Using device: {device}")
 config = {
     **MODEL_CONFIG,
     # Training
-    "batch_size": 2,
-    "learning_rate": 1e-3,
+    "batch_size": 16,
+    "learning_rate": 1e-2,
     "num_epochs": 20,
     "num_warmup_steps": 30,
     "gradient_clip": 30.0,
     "training_steps": 500,
     # Data
-    "audio_dir": "dataset_gen/rotormotor/mp3s",
+    "audio_dir": "dataset_gen/free_music/mp3s",
     "tokenizer_type": "DAC",
     # Logging
     "log_audio_every": 100,  # batches
@@ -78,7 +78,8 @@ dataset = RawAudioDataset(
 dataloader = DataLoader(
     dataset,
     batch_size=config["batch_size"],
-    num_workers=2,  # Reduce for stability with on-the-fly tokenization
+    num_workers=6,  # Reduce for stability with on-the-fly tokenization
+    prefetch_factor=3,
     pin_memory=True,
 )
 

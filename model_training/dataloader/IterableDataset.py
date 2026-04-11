@@ -6,6 +6,9 @@ import random
 import soundfile as sf
 import numpy as np
 
+import warnings
+warnings.filterwarnings("ignore", message=".*Xing stream size.*")
+
 
 class RawAudioDataset(IterableDataset):
     """
