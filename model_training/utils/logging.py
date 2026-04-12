@@ -9,108 +9,54 @@ if TYPE_CHECKING:
 def log_audio_samples(
     writer: "SummaryWriter",
     tokenizer: "DACAudioTokenizer",
-    past_tokens: torch.Tensor,
     future_tokens: torch.Tensor,
     predictions_one_token: torch.Tensor,
     predictions_autoreg: torch.Tensor,
     global_step: int,
     future_len: int,
-    audio_log_level: int = 4,
+    audio_log_level: int,
 ):
     """
-    Log audio samples to TensorBoard including predictions and ground truth.
+    Log audio samples to TensorBoard.
 
-    Args:
-        writer: TensorBoard SummaryWriter
-        tokenizer: Audio tokenizer for decoding
-        past_tokens: Past context tokens
-        future_tokens: Ground truth future tokens
-        predictions_one_token: Predictions using ground truth context
-        predictions_autoreg: Full autoregressive predictions
-        global_step: Current training step
-        future_len: Length of future sequence
-        audio_log_level: Number of codebooks to use for decoding
-
-    Returns:
-        Tuple of (gt_waveform, pred_waveform) for further visualization (CPU tensors)
+    All tensor formats:
+    - future_tokens: [B, T, K] (model format)
+    - predictions: [B, T, K] (model format)
+    - decode expects: [B, K, T]
     """
     try:
         sample_rate = tokenizer.sampling_rate
-
-        # Use all available codebooks for better quality
         actual_codebooks = min(audio_log_level, future_tokens.shape[-1])
 
-        # Log one-token prediction (using ground truth context)
-        one_token_tokens = predictions_one_token[:, :future_len, :actual_codebooks]
-        waveform_one_token = tokenizer.decode_to_waveform(
-            one_token_tokens.transpose(1, 2)
-        )
+        def decode_and_prepare(tokens):
+            """Decode tokens and prepare for TensorBoard [B, K, T] -> [B, 1, S] -> [S]"""
+            codes = tokens[:, :future_len, :actual_codebooks].transpose(1, 2)
+            waveform = tokenizer.decode_to_waveform(codes)
+            if isinstance(waveform, list):
+                waveform = waveform[0]
+            if waveform.is_cuda:
+                waveform = waveform.cpu()
+            # [B, 1, S] -> take first sample -> [S]
+            return waveform[0].flatten()
 
-        # Handle decode output - might be list or tensor
-        if isinstance(waveform_one_token, list):
-            waveform_one_token = waveform_one_token[0]
-        if waveform_one_token.is_cuda:
-            waveform_one_token = waveform_one_token.cpu()
+        # Decode and log each
+        gt_waveform = decode_and_prepare(future_tokens)
+        writer.add_audio("Audio/GroundTruth", gt_waveform, global_step, sample_rate)
 
-        # Get first sample from batch and flatten to 1D
-        if waveform_one_token.dim() > 1:
-            waveform_one_token = waveform_one_token[0].flatten()
-
+        pred_waveform = decode_and_prepare(predictions_autoreg)
         writer.add_audio(
-            "Audio/OneTokenPrediction",
-            waveform_one_token,
-            global_step,
-            sample_rate=sample_rate,
+            "Audio/AutoregPrediction", pred_waveform, global_step, sample_rate
         )
-        del waveform_one_token
 
-        # Log full autoregressive prediction
-        autoreg_tokens = predictions_autoreg[:, :future_len, :actual_codebooks]
-        waveform_autoreg = tokenizer.decode_to_waveform(autoreg_tokens.transpose(1, 2))
-
-        if isinstance(waveform_autoreg, list):
-            waveform_autoreg = waveform_autoreg[0]
-        if waveform_autoreg.is_cuda:
-            waveform_autoreg = waveform_autoreg.cpu()
-
-        if waveform_autoreg.dim() > 1:
-            waveform_autoreg = waveform_autoreg[0].flatten()
-
+        one_token_waveform = decode_and_prepare(predictions_one_token)
         writer.add_audio(
-            "Audio/AutoregPrediction",
-            waveform_autoreg,
-            global_step,
-            sample_rate=sample_rate,
+            "Audio/OneTokenPrediction", one_token_waveform, global_step, sample_rate
         )
 
-        # Log ground truth
-        gt_tokens = future_tokens[:, :future_len, :actual_codebooks]
-        gt_waveform = tokenizer.decode_to_waveform(gt_tokens.transpose(1, 2))
-
-        if isinstance(gt_waveform, list):
-            gt_waveform = gt_waveform[0]
-        if gt_waveform.is_cuda:
-            gt_waveform = gt_waveform.cpu()
-
-        if gt_waveform.dim() > 1:
-            gt_waveform = gt_waveform[0].flatten()
-
-        writer.add_audio(
-            "Audio/GroundTruth",
-            gt_waveform,
-            global_step,
-            sample_rate=sample_rate,
-        )
-
-        # Return CPU copies for visualization
-        result = (gt_waveform.clone(), waveform_autoreg.clone())
-
-        # Clean up GPU tensors
-        del autoreg_tokens, gt_tokens
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        return result
+        return gt_waveform, pred_waveform
 
     except Exception as e:
         import traceback
@@ -218,7 +164,6 @@ def log_dj_waveform(
             pred_waveform,
             global_step,
             sample_rate=sample_rate,
-            width=width,
         )
         writer.add_figure("Visualization/SpectrogramComparison", fig, global_step)
         import matplotlib.pyplot as plt

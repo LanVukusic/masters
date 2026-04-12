@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This is a PyTorch-based audio deep learning project for training audio continuation models on DAC codec tokens. It uses `uv` as the package manager and Python 3.12. This is a masters thesis project.
+This is a PyTorch-based audio deep learning project for training audio continuation models on DAC codec tokens. It uses `uv` as the package manager and Python 3.14. This is a masters thesis project.
 
 ## Build/Lint/Test Commands
 
@@ -11,20 +11,31 @@ This is a PyTorch-based audio deep learning project for training audio continuat
 # Install dependencies with uv
 uv sync
 
-# Install with GPU support (if needed)
-uv add torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# Add a new dependency (avoid pip)
+uv add <package>
+
+# Install with specific GPU support (CUDA 13.0)
+uv add torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 ```
-Dont use `uv add pip`. avoid pip.  
+**Important**: Never use `uv add pip` or `pip install`. Use `uv pip` only for specific index installs.
 
 ### Running the Training Script
 ```bash
 # From root directory
 uv run model_training/trainModel.py
+
+# With custom arguments
+uv run python model_training/trainModel.py --config configs/train.yaml
 ```
 
 ### Running Tests
+```bash
+# No test framework configured yet - pytest recommended for future
+# pytest testiranje/ -v
 
-No test running is writen yet
+# For now, test manually by running Python files:
+uv run python testiranje/test_model.py
+```
 
 ### Linting and Formatting
 ```bash
@@ -98,15 +109,16 @@ uv run ruff format .
 ```
 /home/lanv/masters/
 ├── model_training/
-│   ├── dataloader/       # Dataset implementations
+│   ├── dataloader/       # Dataset implementations (IterableDataset, etc.)
 │   ├── model/            # Model definitions
 │   ├── tokenizer/        # Audio tokenizers (DAC, Mimi)
 │   ├── simpleModel/      # Working model implementations
 │   ├── narTransformer/   # Transformer architectures
 │   └── trainModel.py    # Main training script
-├── testiranje/          # Test files
-├── dataset_gen/         # Audio datasets
-└── pyproject.toml       # Project configuration
+├── research/             # Research notebooks and experiments
+├── dataset_gen/          # Audio datasets
+├── checkpoints/          # Model checkpoints
+└── pyproject.toml        # Project configuration
 ```
 
 ### Working with Tokenizers
@@ -122,11 +134,17 @@ uv run ruff format .
   tokens = torch.cat(tokens_list, dim=0)
   ```
 
+### Dependencies Notes
+- **torchcodec**: Requires CUDA NPP libraries. If import fails with `libnppicc.so.X` error, install nvidia-npp or use CPU-only PyTorch
+- **ffmpeg**: Required for audio decoding (already in system)
+- **DAC codec**: Requires `descript-audio-codec` package
+
 ### Training Tips
 - Always call `scheduler.step()` after each training step
 - Use gradient clipping cautiously - start with `gradient_clip: 0.0` or high values (10.0+), then tune
 - Monitor loss per batch during training
 - Use `torch.set_grad_enabled(True/False)` appropriately
+- Set DataLoader `num_workers=0` when using on-the-fly tokenization to avoid multiprocessing issues
 
 ### Logging
 - Use tensorboard via `SummaryWriter` for training metrics
@@ -139,9 +157,11 @@ uv run ruff format .
 3. **Gradient explosion**: If loss stays constant around ~ln(vocab_size), gradients may be clipped too aggressively
 4. **CUDA out of memory**: Reduce batch size or sequence length if needed
 5. **DataLoader num_workers**: Set to 0 for on-the-fly tokenization to avoid multiprocessing issues
+6. **torchcodec import**: Ensure nvidia-npp is installed or use compatible CUDA version
 
 ## Testing Guidelines
-- Write tests for new features in `testiranje/` directory
+- Create `testiranje/` directory for tests
+- Use pytest framework (add to dependencies if needed)
 - Use descriptive test function names: `test_model_predict_returns_correct_shape`
 - Mock expensive operations (tokenizers) when possible
 - Test both success cases and edge cases

@@ -213,41 +213,39 @@ class DACAudioTokenizer(AudioTokenizer):
         return codes
 
     def decode_from_codes(self, codes: torch.Tensor) -> torch.Tensor:
-        """
-        Decode DAC codes back to raw waveform.
+        B = codes.shape[0]
+        n_codebooks_used = codes.shape[1]
+        n_total_codebooks = len(self.model.quantizer.quantizers)
 
-        Args:
-            codes: Encoded audio tokens [batch, quantizers, time_steps]
+        # Pad codes to match DAC's expected number of codebooks (32 for 24kHz model)
+        if n_codebooks_used < n_total_codebooks:
+            padding = torch.zeros(
+                B,
+                n_total_codebooks - n_codebooks_used,
+                codes.shape[2],
+                dtype=codes.dtype,
+                device=codes.device,
+            )
+            codes = torch.cat([codes, padding], dim=1)
 
-        Returns:
-            Decoded audio waveform [batch, channels, samples]
-        """
-        # Convert codes back to DAC format [n_quantizers, batch, time_steps]
-        codes_dac_format = codes.permute(1, 0, 2)  # [quantizers, batch, time_steps]
+        codes_dac = codes.permute(1, 0, 2)  # [32, B, T]
 
-        # Decode using DAC model - need to handle the quantizer output properly
         with torch.no_grad():
-            # The quantizer.from_codes returns a tuple, we need the first element
-            # which is the actual latent representation
-            z_tuple = self.model.quantizer.from_codes(codes_dac_format)
-            if isinstance(z_tuple, tuple):
-                z = z_tuple[0]  # Take the first element of the tuple
-            else:
-                z = z_tuple  # If it's not a tuple, use as is
+            z_tuple = self.model.quantizer.from_codes(codes_dac)
+            z = z_tuple[0] if isinstance(z_tuple, tuple) else z_tuple
+            # z shape: [32, 1024, T]
+            # DAC decoder expects z in format that works with batch size
+            decoded = self.model.decode(z)
 
-            # The decode method expects the latent representation and returns [batch, channels, samples]
-            # But it returns with batch and channels swapped, so we need to fix the shape
-            decoded_audio = self.model.decode(z)
+        # decoded may have wrong batch dim, take first sample and expand to correct batch
+        if decoded.shape[0] != B:
+            decoded = decoded[0:1].expand(B, -1, -1)
 
-        # The DAC decode returns [batch, channels, samples] but we might need to ensure correct shape
-        # If the shape is [n_quantizers, channels, samples] due to the batch dimension being wrong,
-        # we need to handle it properly
-        if decoded_audio.shape[0] != codes.shape[0]:  # batch dimension doesn't match
-            # The decoded audio should have the same batch size as input codes
-            # DAC decode might return [batch, channels, samples] correctly
-            pass  # The shape should be correct as [batch, channels, samples]
+        # Ensure [B, 1, S] mono format
+        if decoded.dim() == 3 and decoded.shape[1] > 1:
+            decoded = decoded.mean(dim=1, keepdim=True)
 
-        return decoded_audio.to(self.device)
+        return decoded.to(self.device)
 
     def decode_to_waveform(
         self, codes: Union[torch.Tensor, List[torch.Tensor]]
