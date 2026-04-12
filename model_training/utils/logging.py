@@ -49,15 +49,12 @@ def log_audio_samples(
         # Handle decode output - might be list or tensor
         if isinstance(waveform_one_token, list):
             waveform_one_token = waveform_one_token[0]
-
-        # Ensure on CPU and correct shape for TensorBoard
         if waveform_one_token.is_cuda:
             waveform_one_token = waveform_one_token.cpu()
 
-        if waveform_one_token.dim() == 3:
-            waveform_one_token = waveform_one_token.squeeze(0)  # (1, T) -> (T,)
-        elif waveform_one_token.dim() == 2 and waveform_one_token.shape[0] > 1:
-            waveform_one_token = waveform_one_token.mean(dim=0)  # (C, T) -> (T,)
+        # Get first sample from batch and flatten to 1D
+        if waveform_one_token.dim() > 1:
+            waveform_one_token = waveform_one_token[0].flatten()
 
         writer.add_audio(
             "Audio/OneTokenPrediction",
@@ -76,10 +73,8 @@ def log_audio_samples(
         if waveform_autoreg.is_cuda:
             waveform_autoreg = waveform_autoreg.cpu()
 
-        if waveform_autoreg.dim() == 3:
-            waveform_autoreg = waveform_autoreg.squeeze(0)
-        elif waveform_autoreg.dim() == 2 and waveform_autoreg.shape[0] > 1:
-            waveform_autoreg = waveform_autoreg.mean(dim=0)
+        if waveform_autoreg.dim() > 1:
+            waveform_autoreg = waveform_autoreg[0].flatten()
 
         writer.add_audio(
             "Audio/AutoregPrediction",
@@ -97,10 +92,8 @@ def log_audio_samples(
         if gt_waveform.is_cuda:
             gt_waveform = gt_waveform.cpu()
 
-        if gt_waveform.dim() == 3:
-            gt_waveform = gt_waveform.squeeze(0)
-        elif gt_waveform.dim() == 2 and gt_waveform.shape[0] > 1:
-            gt_waveform = gt_waveform.mean(dim=0)
+        if gt_waveform.dim() > 1:
+            gt_waveform = gt_waveform[0].flatten()
 
         writer.add_audio(
             "Audio/GroundTruth",

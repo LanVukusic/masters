@@ -34,12 +34,12 @@ print(f"Using device: {device}")
 config = {
     **MODEL_CONFIG,
     # Training
-    "batch_size": 32,
-    "learning_rate": 1e-3,
+    "batch_size": 64,
+    "learning_rate": 1e-4,
     "num_epochs": 5,
     "num_warmup_steps": 200,
     "gradient_clip": 30.0,
-    "training_steps": 1e4,
+    "training_steps": 1e6,
     # Data
     "audio_dir": "dataset_gen/free_music/rotormotor/mp3s",
     "tokenizer_type": "DAC",
