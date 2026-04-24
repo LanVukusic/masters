@@ -20,23 +20,15 @@ dependencies = [
 ]
 
 # CPU only
-# [[tool.uv.index]]
-# name = "pytorch-cpu"
-# url = "https://download.pytorch.org/whl/cpu"
-# explicit = true
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
-# [[tool.uv.index]]
-# name = "pip"
-# url = "https://pypi.org/simple"
-# explicit = true
-
-# [tool.uv.sources]
-# torch = [{ index = "pytorch-cpu" }]
-# torchvision = [{ index = "pytorch-cpu" }]
-# torchaudio = [{ index = "pytorch-cpu" }]
-# torchcodec = [{ index = "pytorch-cpu" }]
-# ffmpeg = [{ index = "pip" }]
-
+[[tool.uv.index]]
+name = "pip"
+url = "https://pypi.org/simple"
+explicit = true
 
 # GPU - NVIDIA
 [[tool.uv.index]]
@@ -50,11 +42,21 @@ explicit = true
 # url = "https://download.pytorch.org/whl/rocm6.4"
 # explicit = true
 
+# [tool.uv.sources]
+# torch = [{ index = "pytorch-cpu" }]
+# torchvision = [{ index = "pytorch-cpu" }]
+# torchaudio = [{ index = "pytorch-cpu" }]
+# torchcodec = [{ index = "pytorch-cpu" }]
+# ffmpeg = [{ index = "pip" }]
+
+
+
+
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-gpu" }]
 torchvision = [{ index = "pytorch-gpu" }]
 torchaudio = [{ index = "pytorch-gpu" }]
-torchcodec = [{ index = "pytorch-gpu" }]
+torchcodec = [{ index = "pytorch-cpu" }]
 # ffmpeg = [{ index = "pytorch-gpu" }]
 
