@@ -9,39 +9,49 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from models.simple import AudioContinuationTransformer
+
+# from models.simple import AudioContinuationTransformer
 from models.conformer.conformer import AudioContinuationConformer
 
 # from model_training.dataloader.raw_dataset import RawAudioDataset
-from model_training.dataloader.IterableDataset import RawAudioDataset
+from model_training.dataloader.IterableDataset import (
+    RawAudioDataset,
+    TokenizedAudioDataset,
+)
 from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
-from model_training.model_config import MODEL_CONFIG
+from model_training.model_config import MODEL_CONFIG, DAC_SAMPLES_PER_TOKEN
 from utils.logging import (
     log_audio_samples,
     log_training_metrics,
     log_dj_waveform,
 )
 
+
 ADVANCED_LOGGING = True
 active_model = AudioContinuationConformer
 
 
-MODEL_NAME = f"{active_model.__name__}_{time.strftime('%d-%H%M')}"
+MODEL_NAME = f"{active_model.__name__}_{time.strftime('%d-%H%M%S')}"
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
+
+if(device == "cuda:0"):
+    # clean cache
+    torch.cuda.empty_cache()
 
 # Training configuration
 config = {
     **MODEL_CONFIG,
     # Training
-    "batch_size": 16,
-    "learning_rate": 1e-2,
+    "batch_size": 1,
+    "learning_rate": 1e-4,
     "num_epochs": 5,
     "num_warmup_steps": 200,
     "gradient_clip": 30.0,
     "training_steps": 1e6,
     # Data
     "audio_dir": "dataset_gen/free_music/rotormotor/mp3s",
+
     "tokenizer_type": "DAC",
     # Logging
     "log_audio_every": 50,  # batches
@@ -77,22 +87,34 @@ if __name__ == "__main__":
     )
 
     # Tokenizer
-    tokenizer = DACAudioTokenizer(num_quantizers=config["n_codebooks"], device=device)
+    tokenizer = DACAudioTokenizer(
+        num_quantizers=config["n_codebooks"], device=device
+    )
 
-    # Dataset
-    dataset = RawAudioDataset(
+    # Dataset (wrapping with tokenizer)
+    tokens_needed = config["past_len"] + config["future_len"]
+    samples_needed = int(tokens_needed * DAC_SAMPLES_PER_TOKEN)
+    num_chunks = samples_needed // 320 + 1  # samples_per_frame
+
+    raw_dataset = RawAudioDataset(
         audio_dir=config["audio_dir"],
-        num_chunks=config["past_len"] + config["future_len"],  # Total tokens needed
-        target_sampling_rate=config["target_sampling_rate"],
-        cache_size=3,
+        num_chunks=num_chunks,
         shuffle=True,
+    )
+
+    # wrap tokenizer and audio loader in one convenient wrapper
+    dataset = TokenizedAudioDataset(
+        base_dataset=raw_dataset,
+        tokenizer=tokenizer,
+        past_chunks=config["past_len"],
+        device=device,
     )
 
     dataloader = DataLoader(
         dataset,
         batch_size=config["batch_size"],
         num_workers=0,
-        pin_memory=True,
+        collate_fn=TokenizedAudioDataset.collate_fn,
     )
 
     model = active_model(config)
@@ -105,34 +127,38 @@ if __name__ == "__main__":
         if global_step >= config["training_steps"]:
             break
 
-        for batch_idx, raw_audio_batch in enumerate(dataloader):
+        for batch_idx, batch in enumerate(dataloader):
             iter_start_time = time.time()
-            # Move raw audio to device
-            raw_audio_gpu = raw_audio_batch.to(device, non_blocking=True)
+            # Batch already tokenized: {"past": [B, K, T_past], "future": [B, K, T_future]}
+            past_tokens = batch["past"].to(device, non_blocking=True)
+            future_tokens = batch["future"].to(device, non_blocking=False)
+            print("train shapes", past_tokens.shape, future_tokens.shape)
 
-            # =====================================================================
-            # 1. Tokenize audio (no gradients needed)
-            # =====================================================================
-            with torch.no_grad():
-                tokens = tokenizer.encode_from_waveform(
-                    raw_audio_gpu, original_sampling_rate=config["target_sampling_rate"]
-                )
-
-            # tokens shape: [batch, n_codebooks, total_time]
-            batch_size_curr, n_cb, total_time = tokens.shape
-
-            # =====================================================================
-            # 2. Split into past (input) and future (target)
-            # =====================================================================
-            past_tokens = tokens[:, :, : config["past_len"]]  # [B, K, T_past]
-            future_tokens = tokens[
-                :, :, config["past_len"] : config["past_len"] + config["future_len"]
-            ]  # [B, K, T_future]
+            batch_size_curr, n_cb, total_time = past_tokens.shape
 
             # Check we have enough tokens
             if future_tokens.shape[-1] < config["future_len"]:
-                print(f"Warning: Batch {batch_idx} has insufficient tokens, skipping")
+                print(f"Warning: Batch {batch_idx} has insufficient tokens, skipping - {future_tokens.shape[-1]}<{config["future_len"]}")
+                sys.exit(1)
                 continue
+
+            #codes:    [1, num_quantizers, time_steps]
+            waveform = tokenizer.decode(future_tokens)
+            print("NAs", waveform.eq(torch.nan).sum())
+            
+            
+            if isinstance(waveform, list):
+                waveform = waveform[0]
+            if waveform.is_cuda:
+                waveform = waveform.cpu()
+            # [B, 1, S] -> take first sample -> [S]
+            wf = waveform[0].flatten()
+
+            # Decode and log each
+            # gt_waveform = decode_and_prepare(future_tokens)
+            writer.add_audio("Audio/GroundTruth", wf, global_step, tokenizer.sample_rate)
+            print("boop, done", wf.shape)
+            sys.exit(0)
 
             # =====================================================================
             # 3. Rearrange dimensions for model
@@ -309,7 +335,7 @@ if __name__ == "__main__":
 
             iter_time = time.time() - iter_start_time
             time_per_sample = iter_time / config["batch_size"]
-            print(f"{iter_time:.1f}s / iter - {time_per_sample:.2f}s / sample")
+            # print(f"{iter_time:.1f}s / iter - {time_per_sample:.2f}s / sample")
 
             global_step += 1
 

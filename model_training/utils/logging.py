@@ -25,13 +25,15 @@ def log_audio_samples(
     - decode expects: [B, K, T]
     """
     try:
-        sample_rate = tokenizer.sampling_rate
+        sample_rate = tokenizer.sample_rate
         actual_codebooks = min(audio_log_level, future_tokens.shape[-1])
 
         def decode_and_prepare(tokens):
             """Decode tokens and prepare for TensorBoard [B, K, T] -> [B, 1, S] -> [S]"""
             codes = tokens[:, :future_len, :actual_codebooks].transpose(1, 2)
-            waveform = tokenizer.decode_to_waveform(codes)
+            
+            #codes:    [1, num_quantizers, time_steps]
+            waveform = tokenizer.decode(codes)
             if isinstance(waveform, list):
                 waveform = waveform[0]
             if waveform.is_cuda:
