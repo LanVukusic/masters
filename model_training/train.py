@@ -25,10 +25,10 @@ from model_training.model_config import (
     samples_to_chunks,
     tokens_to_chunks,
 )
-from utils.logging import (
-    log_audio_samples,
-    log_training_metrics,
-    log_dj_waveform,
+from utils.visualization import (
+    log_audio,
+    log_metrics,
+    log_visualization,
 )
 
 
@@ -48,20 +48,22 @@ if(device == "cuda:0"):
 config = {
     **MODEL_CONFIG,
     # Training
-    "batch_size": 1,
-    "learning_rate": 1e-4,
-    "num_epochs": 5,
+    "batch_size": 2,
+    "learning_rate": 1e-3,
+    "num_epochs": 1,
     "num_warmup_steps": 200,
     "gradient_clip": 30.0,
-    "training_steps": 1e6,
+    "training_steps": 1000,
     # Data
     "audio_dir": "dataset_gen/free_music/rotormotor/mp3s",
+    "validation_dir": "dataset_gen/free_music/rotormotor/validation",
 
     "tokenizer_type": "DAC",
     # Logging
     "log_audio_every": 50,  # batches
     "log_metrics_every": 10,  # batches
     "log_exposure_every": 100,  # batches
+    "validation_every": 100,  # batches
     # Fidelity decay for training
     "use_fidelity_decay": True,
     # Progressive teacher forcing - DISABLED (using standard CLM like MusicGen/AudioGen)
@@ -121,6 +123,30 @@ if __name__ == "__main__":
         collate_fn=TokenizedAudioDataset.collate_fn,
     )
 
+    # Validation dataset
+    val_raw_dataset = RawAudioDataset(
+        audio_dir=config["validation_dir"],
+        num_chunks=num_chunks,
+        shuffle=False,
+    )
+
+    val_dataset = TokenizedAudioDataset(
+        base_dataset=val_raw_dataset,
+        tokenizer=tokenizer,
+        past_chunks=config["past_len"],
+        device=device,
+    )
+
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=config["batch_size"],
+        num_workers=0,
+        collate_fn=TokenizedAudioDataset.collate_fn,
+    )
+
+
+    scaler = torch.amp.GradScaler()  # before training loop
+
     for epoch in range(config["num_epochs"]):
         model.train()
         epoch_loss = 0.0
@@ -170,14 +196,32 @@ if __name__ == "__main__":
             # =====================================================================
             optimizer.zero_grad()
 
-            # Use standard CLM loss (like MusicGen/AudioGen)
-            loss = model.get_training_loss(
-                past_tokens=past_tokens,
-                future_tokens=future_tokens,
-            )
-            loss_val = loss.item()
+                # Inside batch loop:
+            with torch.amp.autocast(device_type="cuda"):
+                # Use standard CLM loss (like MusicGen/AudioGen)
+                loss = model.get_training_loss(
+                    past_tokens=past_tokens,
+                    future_tokens=future_tokens,
+                )
 
-            loss.backward()
+                if config["use_progressive_tf"]:
+                    # Schedule: decay teacher_forcing_ratio from 1.0 to 0.7 over 2000 steps
+                    ratio = max(0.7, 1.0 - global_step / 2000)
+                    loss = model.get_progressive_teacher_forcing_loss(
+                        past_tokens=past_tokens,
+                        future_tokens=future_tokens,
+                        teacher_forcing_ratio=ratio,
+                    )
+                else:
+                    loss = model.get_training_loss(
+                        past_tokens=past_tokens,
+                        future_tokens=future_tokens,
+                    )
+
+
+            loss_val = loss.item()
+            scaler.scale(loss).backward()
+            # loss.backward()
 
             # Gradient clipping
             if config["gradient_clip"] > 0:
@@ -185,7 +229,9 @@ if __name__ == "__main__":
                     model.parameters(), config["gradient_clip"]
                 )
 
-            optimizer.step()  # update weights
+            # optimizer.step()    # update weights
+            scaler.step(optimizer)
+            scaler.update()
             scheduler.step()  # update lr scheduler
 
             # =====================================================================
@@ -211,15 +257,12 @@ if __name__ == "__main__":
                     probs = torch.softmax(logits, dim=-1)
                     predicted_tokens = logits.argmax(dim=-1).flatten().tolist()
 
-                log_training_metrics(
+                log_metrics(
                     writer=writer,
                     loss=loss_val,
                     lr=scheduler.get_last_lr()[0],
                     global_step=global_step,
                     grad_norm=grad_norm,
-                    teacher_forcing_ratio=None,
-                    logits=probs,
-                    predicted_tokens=predicted_tokens,
                 )
 
                 print(
@@ -256,63 +299,100 @@ if __name__ == "__main__":
                     global_step,
                 )
 
+            # log validation
+            if global_step % config["validation_every"] == 0 and ADVANCED_LOGGING:
+                # Validation at the end of each epoch
+                model.eval()
+                val_loss = 0.0
+                val_batches = 0
+                with torch.no_grad():
+                    for val_batch in val_dataloader:
+                        past_tokens = val_batch["past"].to(device, non_blocking=True)
+                        future_tokens = val_batch["future"].to(device, non_blocking=False)
+
+                        if future_tokens.shape[-1] < config["future_len"]:
+                            continue
+
+                        future_tokens = future_tokens[:, :, :config["future_len"]].contiguous()
+
+                        past_tokens = past_tokens.transpose(1, 2).long()
+                        future_tokens = future_tokens.transpose(1, 2).long()
+
+                        loss = model.get_training_loss(
+                            past_tokens=past_tokens,
+                            future_tokens=future_tokens,
+                        )
+                        val_loss += loss.item()
+                        val_batches += 1
+                        if val_batches >= 10:  # Limit to 10 validation batches
+                            break
+
+                if val_batches > 0:
+                    val_loss /= val_batches
+                    writer.add_scalar("Val/Loss", val_loss, global_step)
+
+                model.train()
+
             # Log audio samples periodically
             if global_step % config["log_audio_every"] == 0 and ADVANCED_LOGGING:
-                torch.save(
-                    {
-                        "model_state_dict": model.state_dict(),
-                        "config": config,
-                    },
-                    f"checkpoints/{MODEL_NAME}_mid.pt",
-                )
-                print(f"mid model saved: checkpoints/{MODEL_NAME}_mid.pt")
+                # torch.save(
+                #     {
+                #         "model_state_dict": model.state_dict(),
+                #         "config": config,
+                #     },
+                #     f"checkpoints/{MODEL_NAME}_mid.pt",
+                # )
+                # print(f"mid model saved: checkpoints/{MODEL_NAME}_mid.pt")
 
                 with torch.no_grad():
                     model.eval()
 
-                    # 1. One-token prediction: predict every token using ground truth context
-                    predictions_one_token = model.predict(
-                        past_tokens,
-                        temperature=1.0,
-                        top_k=200,
-                        top_p=0.95,
-                        repetition_penalty=1.1,
-                        predict_by_one=True,
-                        true_future_tokens=future_tokens,
-                    )
+                    # # 1. One-token prediction: predict every token using ground truth context
+                    # predictions_one_token = model.predict(
+                    #     past_tokens,
+                    #     temperature=1.0,
+                    #     top_k=200,
+                    #     top_p=0.95,
+                    #     repetition_penalty=1.1,
+                    #     predict_by_one=True,
+                    #     true_future_tokens=future_tokens,
+                    # )
 
                     # 2. Full autoregressive: model uses its own predictions as context
                     predictions_autoreg = model.predict(
                         past_tokens,
                         temperature=1.0,
-                        top_k=200,
-                        top_p=0.95,
-                        repetition_penalty=1.1,
+                        top_k=100,
+                        top_p=0.90,
+                        repetition_penalty=1.3,
                     )
+                    # print("Generated token IDs (codebook 0):", predictions_autoreg[0, :, 0].tolist())
+                    # print("Unique tokens:", torch.unique(predictions_autoreg).tolist())
+                    # print(f"Predictions shape: {predictions_autoreg.shape}")
+                    # print(f"Expected: [B, T_future, K] = [1, {config['future_len']}, {config['n_codebooks']}]")
 
                     # Log audio samples
-                    gt_waveform, pred_waveform = log_audio_samples(
+                    gt_waveform, pred_waveform = log_audio(
                         writer=writer,
                         tokenizer=tokenizer,
                         future_tokens=future_tokens,
-                        predictions_one_token=predictions_one_token,
                         predictions_autoreg=predictions_autoreg,
                         global_step=global_step,
                         future_len=config["future_len"],
                         audio_log_level=config["n_codebooks"],
                     )
 
-                    # Log DJ waveform visualization
-                    if gt_waveform is not None and pred_waveform is not None:
-                        log_dj_waveform(
-                            writer=writer,
-                            gt_waveform=gt_waveform,
-                            pred_waveform=pred_waveform,
-                            global_step=global_step,
-                        )
+                    # Log visualization
+                    log_visualization(
+                        writer=writer,
+                        gt_waveform=gt_waveform,
+                        pred_waveform=pred_waveform,
+                        global_step=global_step,
+                    )
 
                     # Explicit cleanup to prevent memory leaks
-                    del predictions_one_token, predictions_autoreg
+                    # del predictions_one_token
+                    del predictions_autoreg
                     del gt_waveform, pred_waveform
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
@@ -325,17 +405,14 @@ if __name__ == "__main__":
 
             global_step += 1
 
-    # =============================================================================
-    # Cleanup
-    # =============================================================================
+       
     writer.close()
-
-    # # Final save
-    # torch.save(
-    #     {
-    #         "model_state_dict": model.state_dict(),
-    #         "config": config,
-    #     },
-    #     f"checkpoints/{MODEL_NAME}_final.pt",
-    # )
-    # print(f"Final model saved: checkpoints/{MODEL_NAME}_final.pt")
+    # Final save
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "config": config,
+        },
+        f"checkpoints/{MODEL_NAME}_final.pt",
+    )
+    print(f"Final model saved: checkpoints/{MODEL_NAME}_final.pt")

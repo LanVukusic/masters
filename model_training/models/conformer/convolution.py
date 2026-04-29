@@ -1,38 +1,57 @@
 import torch
 import torch.nn as nn
 from torch import Tensor
-from typing import Optional
 
 from .activation import Swish, GLU
 from .modules import Transpose
 
 
-class DepthwiseConv1d(nn.Module):
-    def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        kernel_size: int,
-        stride: int = 1,
-        padding: int = 0,
-        bias: bool = False,
-    ) -> None:
+# class DepthwiseConv1d(nn.Module):
+#     def __init__(
+#         self,
+#         in_channels: int,
+#         out_channels: int,
+#         kernel_size: int,
+#         stride: int = 1,
+#         padding: int = 0,
+#         bias: bool = False,
+#     ) -> None:
+#         super().__init__()
+#         assert out_channels % in_channels == 0, (
+#             "out_channels should be constant multiple of in_channels"
+#         )
+#         self.conv = nn.Conv1d(
+#             in_channels=in_channels,
+#             out_channels=out_channels,
+#             kernel_size=kernel_size,
+#             groups=in_channels,
+#             stride=stride,
+#             padding=padding,
+#             bias=bias,
+#         )
+
+#     def forward(self, inputs: Tensor) -> Tensor:
+#         return self.conv(inputs)
+    
+class CausalDepthwiseConv1d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1):
         super().__init__()
-        assert out_channels % in_channels == 0, (
-            "out_channels should be constant multiple of in_channels"
-        )
+        self.pad = kernel_size - 1
         self.conv = nn.Conv1d(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel_size=kernel_size,
-            groups=in_channels,
+            in_channels, out_channels, kernel_size,
+            groups=in_channels,         # depthwise
             stride=stride,
-            padding=padding,
-            bias=bias,
+            padding=0,
+            bias=False,
         )
 
-    def forward(self, inputs: Tensor) -> Tensor:
-        return self.conv(inputs)
+    def forward(self, x):
+        # x: (B, C, T)
+        x = torch.nn.functional.pad(x, (self.pad, 0))     # pad left only
+        out = self.conv(x)
+        # The convolution reduces length to T_original + pad - (kernel_size - 1) = T_original
+        # because output length = (T + pad - kernel_size) / stride + 1 = T
+        return out
 
 
 class PointwiseConv1d(nn.Module):
@@ -83,12 +102,11 @@ class ConformerConvModule(nn.Module):
                 bias=True,
             ),
             GLU(dim=1),
-            DepthwiseConv1d(
+            CausalDepthwiseConv1d(
                 in_channels,
                 in_channels,
                 kernel_size,
                 stride=1,
-                padding=(kernel_size - 1) // 2,
             ),
             nn.BatchNorm1d(in_channels),
             Swish(),
