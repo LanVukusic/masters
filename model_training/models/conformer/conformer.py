@@ -144,6 +144,8 @@ class AudioContinuationConformer(nn.Module):
         B, T_past, C = past_tokens.shape
 
         if future_tokens is not None:
+            if future_tokens.shape[1] > self.future_len:
+                future_tokens = future_tokens[:, : self.future_len, :]
             T_future = future_tokens.shape[1]
             combined = torch.cat([past_tokens, future_tokens], dim=1)
         else:
@@ -151,6 +153,12 @@ class AudioContinuationConformer(nn.Module):
             T_future = 0
 
         T_total = combined.shape[1]
+        max_pos_len = self.pos_embedding.shape[1]
+        if T_total > max_pos_len:
+            raise ValueError(
+                f"Sequence length {T_total} exceeds model max length {max_pos_len}. "
+                f"Check past_len={self.past_len} and future_len={self.future_len}."
+            )
 
         cb_embs = []
         for cb_idx in range(C):
@@ -186,6 +194,9 @@ class AudioContinuationConformer(nn.Module):
         past_tokens: (Batch, T_past, N_Codebooks)
         future_tokens: (Batch, T_future, N_Codebooks)
         """
+        if future_tokens.shape[1] > self.future_len:
+            future_tokens = future_tokens[:, : self.future_len, :].contiguous()
+
         logits = self.forward(past_tokens, future_tokens)
 
         total_loss = 0
@@ -216,6 +227,9 @@ class AudioContinuationConformer(nn.Module):
         Memory-efficient version: compute loss on full sequence first, then do a second forward for sampling.
         """
         B, T_future, C = future_tokens.shape
+
+        if future_tokens.shape[1] > self.future_len:
+            future_tokens = future_tokens[:, : self.future_len, :].contiguous()
 
         logits = self.forward(past_tokens, future_tokens)
 
@@ -292,7 +306,24 @@ class AudioContinuationConformer(nn.Module):
         max_new_tokens = self.future_len
         self.eval()
 
-        batch_size, time, codebooks = prompt_tokens.shape
+        batch_size, prompt_len, codebooks = prompt_tokens.shape
+        max_context = self.pos_embedding.shape[1] - self.future_len
+        if max_context <= 0:
+            raise ValueError(
+                f"Model max length {self.pos_embedding.shape[1]} is not larger than future_len {self.future_len}."
+            )
+        if prompt_len > max_context:
+            prompt_tokens = prompt_tokens[:, -max_context:, :].contiguous()
+            prompt_len = prompt_tokens.shape[1]
+
+        if true_future_tokens is not None:
+            max_new_tokens = min(max_new_tokens, true_future_tokens.shape[1])
+
+        max_new_tokens = min(max_new_tokens, self.pos_embedding.shape[1] - prompt_len)
+        if max_new_tokens <= 0:
+            raise ValueError(
+                f"No room to generate new tokens: prompt length {prompt_len}, max length {self.pos_embedding.shape[1]}."
+            )
 
         generated = prompt_tokens.clone()
         out = torch.empty(0, dtype=torch.long, device=prompt_tokens.device)

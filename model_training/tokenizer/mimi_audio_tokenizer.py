@@ -6,7 +6,9 @@ import warnings
 from .tokenizer import AudioTokenizer
 
 SAMPLES_PER_FRAME = 1920
-SAMPLE_RATE = 24000  # 2.4KHZ
+from model_training.model_config import TARGET_SAMPLING_RATE
+
+SAMPLE_RATE = TARGET_SAMPLING_RATE  # 2.4KHZ
 
 MODEL_STRING: str = "kyutai/mimi"
 

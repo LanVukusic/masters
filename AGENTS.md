@@ -17,15 +17,11 @@ uv add <package>
 # Install with specific GPU support (CUDA 13.0)
 uv add torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 ```
-**Important**: Never use `uv add pip` or `pip install`. Use `uv pip` only for specific index installs.
+**Important**: Never use `uv add pip` or `pip install`.
 
 ### Running the Training Script
 ```bash
-# From root directory
-uv run model_training/trainModel.py
-
-# With custom arguments
-uv run python model_training/trainModel.py --config configs/train.yaml
+uv run python model_training/train.py
 ```
 
 ### Running Tests
@@ -49,115 +45,54 @@ uv run ruff check . --fix
 uv run ruff format .
 ```
 
-## Code Style Guidelines
+## Canonical Shape Contract
 
-### General Principles
-- Write concise, readable code
-- Avoid unnecessary comments - let code explain itself
-- Use descriptive variable and function names
-- Keep functions focused and small (under 50 lines when possible)
+Use this contract consistently in tokenizer, dataset, logging, and training code.
 
-### Imports
-- Use absolute imports (e.g., `from model_training.dataloader.raw_dataset import RawAudioDataset`)
-- Add `sys.path.insert(0, 'model_training')` when running scripts from non-package directories
-- Group imports: standard library, third-party, local application
-- Avoid wildcard imports (`from X import *`)
+- Raw waveform input: `[B, 1, samples]`
+- Tokenizer.encode input: `[B, 1, samples]`
+- Tokenizer.encode output: `[B, num_quantizers, time_steps]`
+- Tokenizer.decode input: `[B, num_quantizers, time_steps]`
+- Tokenizer.decode output: `[B, 1, samples]`
+- Dataset output: `{"past": [B, K, T_past], "future": [B, K, T_future]}`
+- Model boundary: transpose once from `[B, K, T]` -> `[B, T, K]`
 
-### Formatting
-- Maximum line length: 100 characters (ruff default)
-- Use 4 spaces for indentation (not tabs)
-- Use trailing commas in multi-line collections
-- Use f-strings for string formatting (not `.format()` or `%`)
+### Agent guidance
 
-### Types
-- Use type hints for function parameters and return values when they improve clarity
-- Prefer concrete types over `Any` when possible
-- Example:
-  ```python
-  def process_audio(tokens: torch.Tensor, sample_rate: int) -> torch.Tensor:
-      ...
-  ```
+- Preserve the external token shape `[B, K, T]` everywhere outside the model.
+- Keep tokenizer code limited to encoding/decoding and dataset code limited to raw waveform chunking and token batching.
+- Avoid adding `squeeze`, `unsqueeze`, or extra `transpose` operations unless the canonical contract requires it.
+- Use shared conversion helpers in `model_training.model_config` for all sample/token/second/chunk math.
+- Perform token-axis transformations only once at the model input/output boundary.
 
-### Naming Conventions
-- `snake_case` for functions, variables, and module names
-- `PascalCase` for classes
-- `UPPER_SNAKE_CASE` for constants
-- Prefix private methods with underscore: `_private_method()`
+## Minimal Style Guidelines
 
-### Error Handling
-- Use descriptive error messages
-- Catch specific exceptions when possible
-- Never silently swallow exceptions without logging
-- Example:
-  ```python
-  try:
-      result = tokenizer.encode(audio)
-  except ValueError as e:
-      raise ValueError(f"Failed to encode audio: {e}") from e
-  ```
+- Use absolute imports for local modules.
+- Keep functions focused and clear.
+- Prefer concrete type hints where useful.
+- Use 4 spaces for indentation and a max line length of 100.
+- Use f-strings for formatting.
 
-### PyTorch-Specific Guidelines
-- Use `device = torch.device("cuda" if torch.cuda.is_available() else "cpu")` for device management
-- Always move tensors to device with `.to(device, non_blocking=True)` for DataLoader batches
-- Use `with torch.no_grad():` for inference
-- Use `torch.no_grad()` context for validation and generation
-- Prefer `nn.Module` subclasses over functional code
-- Use `nn.Parameter` for learnable parameters
-- Initialize weights properly (e.g., `nn.init.xavier_uniform_`)
+## Training Notes
 
-### Project Structure
-```
-/home/lanv/masters/
-├── model_training/
-│   ├── dataloader/       # Dataset implementations (IterableDataset, etc.)
-│   ├── model/            # Model definitions
-│   ├── tokenizer/        # Audio tokenizers (DAC, Mimi)
-│   ├── simpleModel/      # Working model implementations
-│   ├── narTransformer/   # Transformer architectures
-│   └── trainModel.py    # Main training script
-├── research/             # Research notebooks and experiments
-├── dataset_gen/          # Audio datasets
-├── checkpoints/          # Model checkpoints
-└── pyproject.toml        # Project configuration
-```
+- Use `device = torch.device("cuda" if torch.cuda.is_available() else "cpu")`.
+- Use `num_workers=0` in DataLoader for on-the-fly tokenization.
+- Call `scheduler.step()` after `optimizer.step()`.
+- Clip gradients only when needed.
+- Use `with torch.no_grad():` for evaluation and decoding.
 
-### Working with Tokenizers
-- When using DAC or Mimi tokenizers, process audio one sample at a time in batches (the tokenizer may squeeze batch dimension)
-- Always use `original_sampling_rate` parameter when encoding
-- Example batch processing:
-  ```python
-  tokens_list = []
-  for i in range(raw_audio_gpu.shape[0]):
-      single_audio = raw_audio_gpu[i:i+1]
-      codes = tokenizer.encode_from_waveform(single_audio, original_sampling_rate=rate)
-      tokens_list.append(codes)
-  tokens = torch.cat(tokens_list, dim=0)
-  ```
+## Logging and Tokens
 
-### Dependencies Notes
-- **torchcodec**: Requires CUDA NPP libraries. If import fails with `libnppicc.so.X` error, install nvidia-npp or use CPU-only PyTorch
-- **ffmpeg**: Required for audio decoding (already in system)
-- **DAC codec**: Requires `descript-audio-codec` package
+- Token tensors should be `[B, K, T]` before the model boundary.
+- Model inputs are transposed to `[B, T, K]` for the model.
+- Decode tokens with the tokenizer only once per logging pass.
+- Log audio with `SummaryWriter` after decoder output.
 
-### Training Tips
-- Always call `scheduler.step()` after each training step
-- Use gradient clipping cautiously - start with `gradient_clip: 0.0` or high values (10.0+), then tune
-- Monitor loss per batch during training
-- Use `torch.set_grad_enabled(True/False)` appropriately
-- Set DataLoader `num_workers=0` when using on-the-fly tokenization to avoid multiprocessing issues
+## Common Pitfalls
 
-### Logging
-- Use tensorboard via `SummaryWriter` for training metrics
-- Log audio samples periodically for qualitative evaluation
-- Use meaningful metric names: `Train/Loss`, `Train/LR`, `Train/GradNorm`
-
-### Common Pitfalls
-1. **Tokenizer batch handling**: Some tokenizers expect `[channels, samples]`, not `[batch, channels, samples]`
-2. **Scheduler not stepping**: Remember to call `scheduler.step()` after `optimizer.step()`
-3. **Gradient explosion**: If loss stays constant around ~ln(vocab_size), gradients may be clipped too aggressively
-4. **CUDA out of memory**: Reduce batch size or sequence length if needed
-5. **DataLoader num_workers**: Set to 0 for on-the-fly tokenization to avoid multiprocessing issues
-6. **torchcodec import**: Ensure nvidia-npp is installed or use compatible CUDA version
+- Do not let agents overcomplicate dataloader/tokenizer shape handling.
+- Avoid repeated token reshaping outside the documented contract.
+- Keep one canonical batch shape and transpose only at the model interface.
 
 ## Testing Guidelines
 - Create `testiranje/` directory for tests

@@ -26,7 +26,9 @@ def main():
     audio_path = (
         "dataset_gen/free_music/rotormotor/mp3s/001 Guy Contact - Cool Blue Liquid.mp3"
     )
-    target_sr = 24000
+    from model_training.model_config import TARGET_SAMPLING_RATE
+
+    target_sr = TARGET_SAMPLING_RATE
     target_duration = 3.0
 
     print(f"\n=== Loading Audio: {os.path.basename(audio_path)} ===")

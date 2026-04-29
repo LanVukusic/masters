@@ -1,6 +1,8 @@
 import torch
 from typing import TYPE_CHECKING
 
+from model_training.model_config import TARGET_SAMPLING_RATE
+
 if TYPE_CHECKING:
     from torch.utils.tensorboard import SummaryWriter
     from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
@@ -144,7 +146,7 @@ def log_dj_waveform(
     gt_waveform: torch.Tensor,
     pred_waveform: torch.Tensor,
     global_step: int,
-    sample_rate: int = 24000,
+    sample_rate: int = TARGET_SAMPLING_RATE,
     width: int = 500,
 ):
     """
@@ -155,7 +157,7 @@ def log_dj_waveform(
         gt_waveform: Ground truth waveform (CPU tensor)
         pred_waveform: Predicted waveform (CPU tensor)
         global_step: Current training step
-        sample_rate: Audio sample rate (default 24000 for DAC)
+        sample_rate: Audio sample rate (default TARGET_SAMPLING_RATE for DAC)
         width: Width for waveform generation
     """
     try:

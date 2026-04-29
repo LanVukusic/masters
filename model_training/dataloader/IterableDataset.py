@@ -7,12 +7,14 @@ from typing import List, Iterator
 import random
 from typing import Dict
 
+from model_training.model_config import DAC_FRAME_SIZE, TARGET_SAMPLING_RATE
+
 SAMPLE_FILE = "dataset_gen/free_music/rotormotor/mp3s/001 Guy Contact - Cool Blue Liquid.mp3"
 
 class RawAudioDataset(IterableDataset):
     VALID_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac"}
-    TARGET_SR = 24000
-    FRAME_SIZE = 320  # Fixed: DAC 24kHz stride = 1 token time step
+    TARGET_SR = TARGET_SAMPLING_RATE
+    FRAME_SIZE = DAC_FRAME_SIZE  # Fixed: DAC 24kHz stride = 1 token time step
 
     def __init__(
         self,
@@ -48,23 +50,20 @@ class RawAudioDataset(IterableDataset):
             start_seconds=start_sec, stop_seconds=start_sec + duration_sec
         )
         waveform = segment.data  # [channels, samples]
-        print(f"Shape: {waveform.shape}")
 
-        # Mono
-        # Convert stereo to mono (torchcodec: dim=0 is channels)
         if waveform.shape[0] > 1:
             waveform = waveform.mean(dim=0, keepdim=True)  # [1, samples]
 
-        # Add batch dimension: [1, samples] -> [1, 1, samples] for DAC preprocess
         waveform = waveform.unsqueeze(0)  # [1, 1, samples]
 
-        # # Exact length
-        # current_len = waveform.shape[1]
-        # if current_len < self.chunk_samples:
-        #     waveform = torch.nn.functional.pad(waveform, (0, self.chunk_samples - current_len))
-        # elif current_len > self.chunk_samples:
-        #     waveform = waveform[:, :self.chunk_samples]
-        print(f"After mono: {waveform.shape}")
+        current_len = waveform.shape[-1]
+        if current_len < self.chunk_samples:
+            waveform = torch.nn.functional.pad(
+                waveform, (0, self.chunk_samples - current_len)
+            )
+        elif current_len > self.chunk_samples:
+            waveform = waveform[..., : self.chunk_samples]
+
         return waveform  # [1, chunk_samples]
 
     def __iter__(self) -> Iterator[torch.Tensor]:
@@ -82,10 +81,8 @@ class RawAudioDataset(IterableDataset):
 
         for file_path in files_to_process:
             try:
-                if(SAMPLE_FILE is not None):
-                    decoder = AudioDecoder(SAMPLE_FILE, sample_rate=self.TARGET_SR)
-                else:
-                    decoder = AudioDecoder(file_path, sample_rate=self.TARGET_SR)
+                audio_source = SAMPLE_FILE if SAMPLE_FILE is not None else file_path
+                decoder = AudioDecoder(audio_source, sample_rate=self.TARGET_SR)
                 total_samples = int(decoder.metadata.duration_seconds * self.TARGET_SR)
                 
                 for start_pos in range(0, total_samples, self.chunk_samples):
@@ -111,10 +108,14 @@ class TokenizedAudioDataset(IterableDataset):
 
     def __iter__(self):
         for waveform in self.base_dataset:
-            # waveform: [1, samples] → codes: [1, Q, T]
-            print("wf shape", waveform.shape)
-            codes = self.tokenizer.encode(waveform.to(self.device)).squeeze(0)
-            print("codes shape", codes.shape)
+            codes = self.tokenizer.encode(waveform.to(self.device))
+            # codes: [1, num_quantizers, time_steps]
+            if codes.dim() == 3 and codes.shape[0] == 1:
+                codes = codes.squeeze(0)
+            if codes.dim() != 2:
+                raise ValueError(
+                    f"Tokenizer output must be [num_quantizers, time_steps], got {codes.shape}"
+                )
             yield {
                 "past": codes[:, :self.past_chunks],
                 "future": codes[:, self.past_chunks:]

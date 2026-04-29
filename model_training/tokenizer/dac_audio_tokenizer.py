@@ -1,9 +1,10 @@
 import torch
 import dac
+from model_training.model_config import DAC_FRAME_SIZE, TARGET_SAMPLING_RATE
 
 class DACAudioTokenizer:
-    SAMPLE_RATE = 24000
-    FRAME_SIZE = 320  # Matches 24kHz DAC stride
+    SAMPLE_RATE = TARGET_SAMPLING_RATE
+    FRAME_SIZE = DAC_FRAME_SIZE  # Matches 24kHz DAC stride
 
     def __init__(self, num_quantizers: int = 9, device: str | None = None):
         self.num_quantizers = num_quantizers
@@ -28,37 +29,41 @@ class DACAudioTokenizer:
     @torch.no_grad()
     def encode(self, waveform: torch.Tensor) -> torch.Tensor:
         """
-        waveform: [1, 1, samples] @ 24kHz mono
-        returns:  [1, num_quantizers, time_steps]
+        waveform: [B, 1, samples] @ 24kHz mono
+        returns:  [B, num_quantizers, time_steps]
         """
         if waveform.dim() != 3 or waveform.shape[1] != 1:
             raise ValueError(f"Expected [B, 1, samples], got {waveform.shape}")
 
-        # print("encode in shape", waveform.shape)
         x = self.model.preprocess(waveform.to(self.device), self.SAMPLE_RATE)
-        # print("preprocessed shape", x.shape)
         z, codes, _, _, _ = self.model.encode(x, n_quantizers=self.num_quantizers)
-        print(z.shape, codes.shape)
         return codes  # [1, Q, T]
     
 
     @torch.no_grad()
     def decode(self, codes: torch.Tensor) -> torch.Tensor:
         """
-        codes:    [1, num_quantizers, time_steps]
-        returns:  [1, samples] @ 24kHz mono
+        codes:    [B, num_quantizers, time_steps] or [num_quantizers, time_steps]
+        returns: [B, 1, samples] @ 24kHz mono
         """
         
-        if codes.dim() != 3 or codes.shape[1] != self.num_quantizers:
-            raise ValueError(f"Expected [1, {self.num_quantizers}, T], got {codes.shape}")
+        if codes.dim() == 2:
+            codes = codes.unsqueeze(0)
 
-        print("codes shape", codes.shape)
+        if codes.dim() != 3 or codes.shape[1] != self.num_quantizers:
+            raise ValueError(
+                f"Expected [B, {self.num_quantizers}, T], got {codes.shape}"
+            )
+
         z_out = self.model.quantizer.from_codes(codes.to(self.device))
         z = z_out[0] if isinstance(z_out, tuple) else z_out
-        print("zs", z.shape)
         decoded = self.model.decode(z)
 
-        # Guarantee [1, samples] output
         if decoded.dim() == 3:
-            decoded = decoded.squeeze(1) if decoded.shape[1] == 1 else decoded.mean(dim=1)
+            if decoded.shape[1] == 1:
+                decoded = decoded
+            else:
+                decoded = decoded.mean(dim=1, keepdim=True)
+        elif decoded.dim() == 2:
+            decoded = decoded.unsqueeze(1)
         return decoded

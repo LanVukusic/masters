@@ -19,7 +19,12 @@ from model_training.dataloader.IterableDataset import (
     TokenizedAudioDataset,
 )
 from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
-from model_training.model_config import MODEL_CONFIG, DAC_SAMPLES_PER_TOKEN
+from model_training.model_config import (
+    MODEL_CONFIG,
+    DAC_SAMPLES_PER_TOKEN,
+    samples_to_chunks,
+    tokens_to_chunks,
+)
 from utils.logging import (
     log_audio_samples,
     log_training_metrics,
@@ -93,8 +98,7 @@ if __name__ == "__main__":
 
     # Dataset (wrapping with tokenizer)
     tokens_needed = config["past_len"] + config["future_len"]
-    samples_needed = int(tokens_needed * DAC_SAMPLES_PER_TOKEN)
-    num_chunks = samples_needed // 320 + 1  # samples_per_frame
+    num_chunks = tokens_to_chunks(tokens_needed)
 
     raw_dataset = RawAudioDataset(
         audio_dir=config["audio_dir"],
@@ -117,9 +121,6 @@ if __name__ == "__main__":
         collate_fn=TokenizedAudioDataset.collate_fn,
     )
 
-    model = active_model(config)
-    model.to(device)
-
     for epoch in range(config["num_epochs"]):
         model.train()
         epoch_loss = 0.0
@@ -132,39 +133,24 @@ if __name__ == "__main__":
             # Batch already tokenized: {"past": [B, K, T_past], "future": [B, K, T_future]}
             past_tokens = batch["past"].to(device, non_blocking=True)
             future_tokens = batch["future"].to(device, non_blocking=False)
-            print("train shapes", past_tokens.shape, future_tokens.shape)
+            # print("train shapes", past_tokens.shape, future_tokens.shape)
 
             batch_size_curr, n_cb, total_time = past_tokens.shape
 
             # Check we have enough tokens
             if future_tokens.shape[-1] < config["future_len"]:
-                print(f"Warning: Batch {batch_idx} has insufficient tokens, skipping - {future_tokens.shape[-1]}<{config["future_len"]}")
-                sys.exit(1)
+                print(
+                    f"Warning: Batch {batch_idx} has insufficient tokens, skipping - {future_tokens.shape[-1]}<{config['future_len']}"
+                )
                 continue
 
-            #codes:    [1, num_quantizers, time_steps]
-            waveform = tokenizer.decode(future_tokens)
-            print("NAs", waveform.eq(torch.nan).sum())
-            
-            
-            if isinstance(waveform, list):
-                waveform = waveform[0]
-            if waveform.is_cuda:
-                waveform = waveform.cpu()
-            # [B, 1, S] -> take first sample -> [S]
-            wf = waveform[0].flatten()
-
-            # Decode and log each
-            # gt_waveform = decode_and_prepare(future_tokens)
-            writer.add_audio("Audio/GroundTruth", wf, global_step, tokenizer.sample_rate)
-            print("boop, done", wf.shape)
-            sys.exit(0)
+            future_tokens = future_tokens[:, :, : config["future_len"]].contiguous()
 
             # =====================================================================
             # 3. Rearrange dimensions for model
             # =====================================================================
             # Model expects: [batch, time, codebooks]
-            # Tokens are: [batch, codebooks, time]
+            # Dataset output is: [batch, codebooks, time]
             past_tokens = past_tokens.transpose(1, 2).long()  # [B, T_past, K]
             future_tokens = future_tokens.transpose(1, 2).long()  # [B, T_future, K]
 

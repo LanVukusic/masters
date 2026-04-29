@@ -17,7 +17,10 @@ def generate_dj_waveform(audio_tensor, width=500):
     return F.max_pool1d(waveform, kernel_size).squeeze().detach().cpu()
 
 
-def generate_spectrogram(audio_tensor, sample_rate=24000, n_fft=2048, n_mels=128):
+from model_training.model_config import TARGET_SAMPLING_RATE
+
+
+def generate_spectrogram(audio_tensor, sample_rate=TARGET_SAMPLING_RATE, n_fft=2048, n_mels=128):
     """Generate mel-spectrogram for audio visualization."""
     if audio_tensor.is_cuda:
         audio_tensor = audio_tensor.cpu()
@@ -57,7 +60,7 @@ def create_waveform_comparison(gt_waveform, pred_waveform, step, width=500):
     return fig
 
 
-def create_spectrogram_comparison(gt_waveform, pred_waveform, step, sample_rate=24000):
+def create_spectrogram_comparison(gt_waveform, pred_waveform, step, sample_rate=TARGET_SAMPLING_RATE):
     """Create spectrogram comparison figure for TensorBoard."""
     import numpy as np
 
