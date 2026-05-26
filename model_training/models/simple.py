@@ -54,6 +54,20 @@ class AudioContinuationTransformer(nn.Module):
         )
 
         self._loss_fn = nn.CrossEntropyLoss()
+        self._init_weights()
+
+    def _init_weights(self):
+        """GPT-2 style small init so token and positional signals are balanced
+        in magnitude. nn.Embedding default is N(0, 1), which makes the summed
+        token embedding ~100x larger than a randn(..) * 0.02 pos embedding —
+        positional information ends up effectively invisible to the model.
+        """
+        for emb in self.codebook_embeddings:
+            nn.init.normal_(emb.weight, mean=0.0, std=0.02)
+        nn.init.normal_(self.pos_embedding, mean=0.0, std=0.02)
+        for head in self.output_heads:
+            nn.init.normal_(head.weight, mean=0.0, std=0.02)
+            nn.init.zeros_(head.bias)
 
     def _embed(self, tokens: torch.Tensor) -> torch.Tensor:
         # tokens: [B, T, K] -> [B, T, d_model]

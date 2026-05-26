@@ -41,6 +41,6 @@ MODEL_CONFIG = {
     "d_model": 256,
     "n_heads": 8,
     "n_layers": 6,
-    "d_ff": 256,
+    "d_ff": 1024,    # 4 * d_model — standard transformer ratio
     "dropout": 0.1,
 }
