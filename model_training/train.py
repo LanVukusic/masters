@@ -48,9 +48,9 @@ config = {
     **MODEL_CONFIG,
     # Training
     "batch_size": 24,
-    "learning_rate": 5e-3,
+    "learning_rate": 1e-3,         # safe with AdamW on small transformer; bump to 2e-3 only if stable
     "num_epochs": 1,
-    "num_warmup_steps": 300,
+    "num_warmup_steps": 500,       # ~10% of training_steps, standard
     "gradient_clip": 1.0,
     "training_steps": 5000,
     # Data
@@ -196,7 +196,9 @@ if __name__ == "__main__":
 
             is_metric_step = global_step % config["log_metrics_every"] == 0
 
-            with torch.amp.autocast(device_type="cuda"):
+            # bf16 autocast: same exponent range as fp32, so no GradScaler needed.
+            # fp16 without GradScaler silently kills training via gradient underflow.
+            with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
                 if is_metric_step:
                     loss, train_metrics = model.get_training_loss(
                         past_tokens=past_tokens,
@@ -389,8 +391,11 @@ if __name__ == "__main__":
                     model.train()
 
             iter_time = time.time() - iter_start_time
-            time_per_sample = iter_time / config["batch_size"]
-            # print(f"{iter_time:.1f}s / iter - {time_per_sample:.2f}s / sample")
+            if is_metric_step:
+                writer.add_scalar("Train/IterTime", iter_time, global_step)
+                writer.add_scalar(
+                    "Train/TimePerSample", iter_time / config["batch_size"], global_step
+                )
 
             global_step += 1
 
