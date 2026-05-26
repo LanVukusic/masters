@@ -21,18 +21,44 @@ class RawAudioDataset(IterableDataset):
         audio_dir: str,
         num_chunks: int = 8,
         shuffle: bool = False,
+        overlap: float = 0.0,
+        random_offset: bool = False,
     ):
+        """
+        audio_dir:     directory of audio files (walked recursively)
+        num_chunks:    chunks (DAC frames) per yielded window; window length is
+                       num_chunks * FRAME_SIZE samples.
+        shuffle:       randomize file order each epoch.
+        overlap:       float in [0, 1). 0.0 = non-overlapping windows (default,
+                       matches legacy behavior). 0.5 = 50% overlap, doubling the
+                       number of training windows per file.
+        random_offset: when True, each visit to a file picks a random start
+                       offset in [0, stride - 1] so the chunk grid shifts every
+                       epoch. Useful for data augmentation on small datasets.
+        """
+        if not 0.0 <= overlap < 1.0:
+            raise ValueError(f"overlap must be in [0, 1), got {overlap}")
+
         self.audio_dir = audio_dir
         self.num_chunks = num_chunks
         self.shuffle = shuffle
+        self.overlap = overlap
+        self.random_offset = random_offset
         self.chunk_samples = num_chunks * self.FRAME_SIZE
-        
+        self.stride_samples = max(1, int(self.chunk_samples * (1.0 - overlap)))
+
         self.audio_files = self._scan_files(audio_dir)
         if not self.audio_files:
             raise ValueError(f"No audio files found in: {audio_dir}")
-            
-        print(f"RawAudioDataset: {len(self.audio_files)} files | "
-              f"{num_chunks} chunks = {self.chunk_samples/self.TARGET_SR:.3f}s per yield @ {self.TARGET_SR}Hz")
+
+        chunk_sec = self.chunk_samples / self.TARGET_SR
+        stride_sec = self.stride_samples / self.TARGET_SR
+        print(
+            f"RawAudioDataset: {len(self.audio_files)} files | "
+            f"{num_chunks} chunks = {chunk_sec:.3f}s window @ {self.TARGET_SR}Hz | "
+            f"stride={stride_sec:.3f}s (overlap={overlap:.0%}) | "
+            f"random_offset={random_offset}"
+        )
 
     def _scan_files(self, root: str) -> List[str]:
         files = []
@@ -86,12 +112,20 @@ class RawAudioDataset(IterableDataset):
 
         for file_path in files_to_process:
             try:
-                # audio_source = SAMPLE_FILE if SAMPLE_FILE is not None else file_path
-                # decoder = AudioDecoder(audio_source, sample_rate=self.TARGET_SR)
                 decoder = AudioDecoder(file_path, sample_rate=self.TARGET_SR)
                 total_samples = int(decoder.metadata.duration_seconds * self.TARGET_SR)
-                
-                for start_pos in range(0, total_samples - self.chunk_samples + 1, self.chunk_samples):
+
+                offset = (
+                    random.randint(0, self.stride_samples - 1)
+                    if self.random_offset
+                    else 0
+                )
+
+                for start_pos in range(
+                    offset,
+                    total_samples - self.chunk_samples + 1,
+                    self.stride_samples,
+                ):
                     try:
                         yield self._load_chunk(decoder, start_pos)
                     except Exception as e:

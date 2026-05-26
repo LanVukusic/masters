@@ -102,6 +102,8 @@ if __name__ == "__main__":
         audio_dir=config["audio_dir"],
         num_chunks=num_chunks,
         shuffle=True,
+        overlap=0.5,           # 50% window overlap doubles training samples
+        random_offset=True,    # per-file jitter so each epoch sees different slices
     )
 
     # wrap tokenizer and audio loader in one convenient wrapper
