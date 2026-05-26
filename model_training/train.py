@@ -25,12 +25,13 @@ from model_training.model_config import (
 )
 from utils.visualization import (
     log_audio,
+    log_codebook_metrics,
+    log_generation_stats,
     log_metrics,
     log_visualization,
 )
 
 
-ADVANCED_LOGGING = False
 active_model = AudioContinuationTransformer
 
 
@@ -191,12 +192,21 @@ if __name__ == "__main__":
             # =====================================================================
             optimizer.zero_grad()
 
-            with torch.amp.autocast(device_type="cuda"):
-                loss = model.get_training_loss(
-                    past_tokens=past_tokens,
-                    future_tokens=future_tokens,
-                )
+            is_metric_step = global_step % config["log_metrics_every"] == 0
 
+            with torch.amp.autocast(device_type="cuda"):
+                if is_metric_step:
+                    loss, train_metrics = model.get_training_loss(
+                        past_tokens=past_tokens,
+                        future_tokens=future_tokens,
+                        return_metrics=True,
+                    )
+                else:
+                    loss = model.get_training_loss(
+                        past_tokens=past_tokens,
+                        future_tokens=future_tokens,
+                    )
+                    train_metrics = None
 
             loss_val = loss.item()
             scaler.scale(loss).backward()
@@ -220,7 +230,7 @@ if __name__ == "__main__":
             valid_batches += 1
 
             # Log metrics every N batches
-            if global_step % config["log_metrics_every"] == 0:
+            if is_metric_step:
                 grad_norm = math.sqrt(
                     sum(
                         p.grad.norm().item() ** 2
@@ -236,72 +246,102 @@ if __name__ == "__main__":
                     global_step=global_step,
                     grad_norm=grad_norm,
                 )
+                if train_metrics is not None:
+                    log_codebook_metrics(
+                        writer, train_metrics, global_step, prefix="Train"
+                    )
 
+                top1_mean = (
+                    train_metrics["Top1"].mean().item()
+                    if train_metrics is not None
+                    else float("nan")
+                )
                 print(
-                    f"Epoch {epoch + 1} | step: {global_step:.4f}  | Batch {batch_idx} | Loss: {loss_val:.4f} | Grad: {grad_norm:.3f}"
+                    f"Epoch {epoch + 1} | step: {global_step:>5d} | "
+                    f"Loss: {loss_val:.4f} | Top1: {top1_mean:.3f} | "
+                    f"Grad: {grad_norm:.3f} | LR: {scheduler.get_last_lr()[0]:.2e}"
                 )
 
-            # log exposure by generating values autoregresivly twice - expensive
-            if global_step % config["log_exposure_every"] == 0 and ADVANCED_LOGGING:
-                # 1. Run prediction with Teacher Forcing
-                predictions = model.predict(
-                    prompt_tokens=past_tokens,
-                    true_future_tokens=future_tokens,
-                    predict_by_one=True,
-                )
-
-                # 2. Calculate Accuracy
-                accuracy = (predictions == future_tokens).float().mean()
-                writer.add_scalar("Train/Accuracy", accuracy, global_step)
-
-                # 3. Compare with Standard Inference (to measure Exposure Bias)
-                predictions_free = model.predict(
-                    prompt_tokens=past_tokens,
-                    temperature=1.0,
-                    top_k=200,
-                    top_p=0.95,
-                    repetition_penalty=1.1,
-                    predict_by_one=False,
-                )
-                accuracy_free = (predictions_free == future_tokens).float().mean()
-
-                writer.add_scalar(
-                    "Train/ExposureBias",
-                    accuracy.item() - accuracy_free.item(),
-                    global_step,
-                )
-
-            # log validation
-            if global_step % config["validation_every"] == 0 and ADVANCED_LOGGING:
-                # Validation at the end of each epoch
+            # Exposure-bias check: AR-with-teacher-forcing vs free-running AR.
+            # Expensive (two full AR generations); fires every log_exposure_every steps.
+            if global_step % config["log_exposure_every"] == 0:
                 model.eval()
-                val_loss = 0.0
-                val_batches = 0
+                with torch.no_grad():
+                    preds_tf = model.predict(
+                        prompt_tokens=past_tokens,
+                        true_future_tokens=future_tokens,
+                        predict_by_one=True,
+                    )
+                    preds_ar = model.predict(
+                        prompt_tokens=past_tokens,
+                        temperature=1.0,
+                        top_k=200,
+                        top_p=0.95,
+                        repetition_penalty=1.1,
+                        predict_by_one=False,
+                    )
+
+                    acc_tf_per_cb = (preds_tf == future_tokens).float().mean(dim=(0, 1))
+                    acc_ar_per_cb = (preds_ar == future_tokens).float().mean(dim=(0, 1))
+                    log_codebook_metrics(
+                        writer,
+                        {
+                            "AccTF": acc_tf_per_cb,
+                            "AccAR": acc_ar_per_cb,
+                            "ExposureGap": acc_tf_per_cb - acc_ar_per_cb,
+                        },
+                        global_step,
+                        prefix="Generation",
+                    )
+
+                    del preds_tf, preds_ar
+                model.train()
+
+            # Validation pass — use distinct variable names so we don't clobber
+            # the training tensors used by the audio block below.
+            if global_step % config["validation_every"] == 0:
+                model.eval()
+                val_loss_sum = 0.0
+                val_per_cb_loss = torch.zeros(config["n_codebooks"], device=device)
+                val_per_cb_top1 = torch.zeros(config["n_codebooks"], device=device)
+                val_batches_seen = 0
                 with torch.no_grad():
                     for val_batch in val_dataloader:
-                        past_tokens = val_batch["past"].to(device, non_blocking=True)
-                        future_tokens = val_batch["future"].to(device, non_blocking=False)
+                        val_past = val_batch["past"].to(device, non_blocking=True)
+                        val_future = val_batch["future"].to(device, non_blocking=False)
 
-                        if future_tokens.shape[-1] < config["future_len"]:
+                        if val_future.shape[-1] < config["future_len"]:
                             continue
 
-                        future_tokens = future_tokens[:, :, :config["future_len"]].contiguous()
+                        val_future = val_future[:, :, : config["future_len"]].contiguous()
+                        val_past = val_past.transpose(1, 2).long()
+                        val_future = val_future.transpose(1, 2).long()
 
-                        past_tokens = past_tokens.transpose(1, 2).long()
-                        future_tokens = future_tokens.transpose(1, 2).long()
-
-                        loss = model.get_training_loss(
-                            past_tokens=past_tokens,
-                            future_tokens=future_tokens,
+                        vloss, vmetrics = model.get_training_loss(
+                            past_tokens=val_past,
+                            future_tokens=val_future,
+                            return_metrics=True,
                         )
-                        val_loss += loss.item()
-                        val_batches += 1
-                        if val_batches >= 10:  # Limit to 10 validation batches
+                        val_loss_sum += vloss.item()
+                        val_per_cb_loss += vmetrics["Loss"].float()
+                        val_per_cb_top1 += vmetrics["Top1"].float()
+                        val_batches_seen += 1
+                        if val_batches_seen >= 10:
                             break
 
-                if val_batches > 0:
-                    val_loss /= val_batches
-                    writer.add_scalar("Val/Loss", val_loss, global_step)
+                if val_batches_seen > 0:
+                    writer.add_scalar(
+                        "Val/Loss", val_loss_sum / val_batches_seen, global_step
+                    )
+                    log_codebook_metrics(
+                        writer,
+                        {
+                            "Loss": val_per_cb_loss / val_batches_seen,
+                            "Top1": val_per_cb_top1 / val_batches_seen,
+                        },
+                        global_step,
+                        prefix="Val",
+                    )
 
                 model.train()
 
@@ -332,6 +372,13 @@ if __name__ == "__main__":
                         gt_waveform=gt_waveform,
                         pred_waveform=pred_waveform,
                         global_step=global_step,
+                    )
+
+                    log_generation_stats(
+                        writer=writer,
+                        predictions=predictions_autoreg,
+                        global_step=global_step,
+                        prefix="Generation",
                     )
 
                     del predictions_autoreg, gt_waveform, pred_waveform

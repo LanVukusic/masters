@@ -98,15 +98,48 @@ class AudioContinuationTransformer(nn.Module):
         x = x[:, T_past - 1 : T_past - 1 + T_future, :]
         return self._apply_heads(x)
 
-    def get_training_loss(self, past_tokens, future_tokens):
+    def get_training_loss(
+        self,
+        past_tokens,
+        future_tokens,
+        return_metrics: bool = False,
+    ):
+        """
+        Returns the mean CE loss across codebooks.
+        If return_metrics=True, also returns a dict with per-codebook tensors:
+          {"Loss": [K], "Top1": [K], "Top5": [K]}.
+        """
         logits = self.forward(past_tokens, future_tokens)  # [B, T_future, K, V]
         total = 0.0
+        per_cb_loss = [] if return_metrics else None
+        per_cb_top1 = [] if return_metrics else None
+        per_cb_top5 = [] if return_metrics else None
+        top_k = min(5, self.vocab_size)
+
         for k in range(self.n_codebooks):
-            total = total + self._loss_fn(
-                logits[:, :, k, :].reshape(-1, self.vocab_size),
-                future_tokens[:, :, k].reshape(-1),
-            )
-        return total / self.n_codebooks
+            cb_logits = logits[:, :, k, :].reshape(-1, self.vocab_size)
+            cb_targets = future_tokens[:, :, k].reshape(-1)
+            loss_k = self._loss_fn(cb_logits, cb_targets)
+            total = total + loss_k
+
+            if return_metrics:
+                with torch.no_grad():
+                    topk_idx = cb_logits.topk(top_k, dim=-1).indices  # [N, top_k]
+                    targets_expanded = cb_targets.unsqueeze(-1)
+                    per_cb_loss.append(loss_k.detach())
+                    per_cb_top1.append((topk_idx[:, 0] == cb_targets).float().mean())
+                    per_cb_top5.append(
+                        (topk_idx == targets_expanded).any(-1).float().mean()
+                    )
+
+        total = total / self.n_codebooks
+        if return_metrics:
+            return total, {
+                "Loss": torch.stack(per_cb_loss),
+                "Top1": torch.stack(per_cb_top1),
+                "Top5": torch.stack(per_cb_top5),
+            }
+        return total
 
     @torch.no_grad()
     def predict(

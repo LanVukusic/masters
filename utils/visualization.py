@@ -61,3 +61,55 @@ def log_visualization(writer, gt_waveform, pred_waveform, global_step):
     writer.add_figure("Visualization/SpectrogramComparison", fig, global_step)
     import matplotlib.pyplot as plt
     plt.close(fig)
+
+
+def log_codebook_metrics(writer, metrics, global_step, prefix="Train"):
+    """
+    Log per-codebook scalars + a mean across codebooks.
+      metrics: dict[str, Tensor[K]] — e.g. {"Loss": ..., "Top1": ..., "Top5": ...}
+      prefix:  TB tag prefix (e.g. "Train", "Val", "Generation")
+    Produces tags of the form  {prefix}_per_cb/{short}/cb_{kk}  and  .../mean.
+    """
+    for short, values in metrics.items():
+        values = values.detach().float()
+        for k in range(values.shape[0]):
+            writer.add_scalar(
+                f"{prefix}_per_cb/{short}/cb_{k:02d}", values[k].item(), global_step
+            )
+        writer.add_scalar(
+            f"{prefix}_per_cb/{short}/mean", values.mean().item(), global_step
+        )
+
+
+def log_generation_stats(writer, predictions, global_step, prefix="Generation"):
+    """
+    Log AR-generation health from a [B, T, K] long tensor of predicted tokens:
+      - per-codebook token-id histograms ({prefix}/tokens_cb_KK)
+      - per-codebook unique-token fraction and empirical entropy (per_cb scalars)
+
+    Stuck-ness symptoms: unique fraction near 0, entropy near 0.
+    """
+    if predictions.dim() != 3:
+        return
+    preds = predictions.detach().cpu().long()
+    _, _, K = preds.shape
+
+    unique_fracs = torch.zeros(K)
+    entropies = torch.zeros(K)
+    for k in range(K):
+        toks = preds[:, :, k].flatten()
+        writer.add_histogram(f"{prefix}/tokens_cb_{k:02d}", toks, global_step, bins=64)
+
+        n_total = toks.numel()
+        unique_fracs[k] = toks.unique().numel() / max(n_total, 1)
+
+        counts = torch.bincount(toks).float()
+        probs = counts / counts.sum().clamp(min=1.0)
+        entropies[k] = -(probs * probs.clamp(min=1e-12).log()).sum()
+
+    log_codebook_metrics(
+        writer,
+        {"UniqueFrac": unique_fracs, "Entropy": entropies},
+        global_step,
+        prefix=prefix,
+    )
