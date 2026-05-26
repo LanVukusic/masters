@@ -311,32 +311,10 @@ if __name__ == "__main__":
 
                 model.train()
 
-            # Log audio samples periodically
-            if global_step % config["log_audio_every"] == 0 and ADVANCED_LOGGING:
-                # torch.save(
-                #     {
-                #         "model_state_dict": model.state_dict(),
-                #         "config": config,
-                #     },
-                #     f"checkpoints/{MODEL_NAME}_mid.pt",
-                # )
-                # print(f"mid model saved: checkpoints/{MODEL_NAME}_mid.pt")
-
+            # Log audio + spectrogram samples to TensorBoard every N steps
+            if global_step % config["log_audio_every"] == 0:
                 with torch.no_grad():
                     model.eval()
-
-                    # # 1. One-token prediction: predict every token using ground truth context
-                    # predictions_one_token = model.predict(
-                    #     past_tokens,
-                    #     temperature=1.0,
-                    #     top_k=200,
-                    #     top_p=0.95,
-                    #     repetition_penalty=1.1,
-                    #     predict_by_one=True,
-                    #     true_future_tokens=future_tokens,
-                    # )
-
-                    # 2. Full autoregressive: model uses its own predictions as context
                     predictions_autoreg = model.predict(
                         past_tokens,
                         temperature=1.0,
@@ -344,12 +322,7 @@ if __name__ == "__main__":
                         top_p=0.90,
                         repetition_penalty=1.3,
                     )
-                    # print("Generated token IDs (codebook 0):", predictions_autoreg[0, :, 0].tolist())
-                    # print("Unique tokens:", torch.unique(predictions_autoreg).tolist())
-                    # print(f"Predictions shape: {predictions_autoreg.shape}")
-                    # print(f"Expected: [B, T_future, K] = [1, {config['future_len']}, {config['n_codebooks']}]")
 
-                    # Log audio samples
                     gt_waveform, pred_waveform = log_audio(
                         writer=writer,
                         tokenizer=tokenizer,
@@ -360,7 +333,6 @@ if __name__ == "__main__":
                         audio_log_level=config["n_codebooks"],
                     )
 
-                    # Log visualization
                     log_visualization(
                         writer=writer,
                         gt_waveform=gt_waveform,
@@ -368,10 +340,7 @@ if __name__ == "__main__":
                         global_step=global_step,
                     )
 
-                    # Explicit cleanup to prevent memory leaks
-                    # del predictions_one_token
-                    del predictions_autoreg
-                    del gt_waveform, pred_waveform
+                    del predictions_autoreg, gt_waveform, pred_waveform
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
 
