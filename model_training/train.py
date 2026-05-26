@@ -21,8 +21,6 @@ from model_training.dataloader.IterableDataset import (
 from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
 from model_training.model_config import (
     MODEL_CONFIG,
-    DAC_SAMPLES_PER_TOKEN,
-    samples_to_chunks,
     tokens_to_chunks,
 )
 from utils.logging import (
@@ -32,7 +30,7 @@ from utils.logging import (
 )
 
 
-ADVANCED_LOGGING = True
+ADVANCED_LOGGING = False
 active_model = AudioContinuationConformer
 
 
@@ -55,8 +53,7 @@ config = {
     "gradient_clip": 30.0,
     "training_steps": 1e6,
     # Data
-    "audio_dir": "dataset_gen/free_music/rotormotor/mp3s",
-
+    "audio_dir": "dataset_gen/free_music/rotormotor/mp3s_small",
     "tokenizer_type": "DAC",
     # Logging
     "log_audio_every": 50,  # batches
