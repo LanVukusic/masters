@@ -10,8 +10,8 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-# from models.simple import AudioContinuationTransformer
-from models.conformer.conformer import AudioContinuationConformer
+from models.simple import AudioContinuationTransformer
+# from models.conformer.conformer import AudioContinuationConformer
 
 # from model_training.dataloader.raw_dataset import RawAudioDataset
 from model_training.dataloader.IterableDataset import (
@@ -31,7 +31,7 @@ from utils.visualization import (
 
 
 ADVANCED_LOGGING = False
-active_model = AudioContinuationConformer
+active_model = AudioContinuationTransformer
 
 
 MODEL_NAME = f"{active_model.__name__}_{time.strftime('%d-%H%M%S')}"
@@ -62,8 +62,6 @@ config = {
     "validation_every": 100,  # batches
     # Fidelity decay for training
     "use_fidelity_decay": True,
-    # Progressive teacher forcing - DISABLED (using standard CLM like MusicGen/AudioGen)
-    "use_progressive_tf": False,
 }
 
 # main serves as the multiprocessing guard in python 14.
@@ -192,27 +190,11 @@ if __name__ == "__main__":
             # =====================================================================
             optimizer.zero_grad()
 
-                # Inside batch loop:
             with torch.amp.autocast(device_type="cuda"):
-                # Use standard CLM loss (like MusicGen/AudioGen)
                 loss = model.get_training_loss(
                     past_tokens=past_tokens,
                     future_tokens=future_tokens,
                 )
-
-                if config["use_progressive_tf"]:
-                    # Schedule: decay teacher_forcing_ratio from 1.0 to 0.7 over 2000 steps
-                    ratio = max(0.7, 1.0 - global_step / 2000)
-                    loss = model.get_progressive_teacher_forcing_loss(
-                        past_tokens=past_tokens,
-                        future_tokens=future_tokens,
-                        teacher_forcing_ratio=ratio,
-                    )
-                else:
-                    loss = model.get_training_loss(
-                        past_tokens=past_tokens,
-                        future_tokens=future_tokens,
-                    )
 
 
             loss_val = loss.item()
