@@ -9,7 +9,7 @@ from typing import Dict
 
 from model_training.model_config import DAC_FRAME_SIZE, TARGET_SAMPLING_RATE
 
-SAMPLE_FILE = "dataset_gen/free_music/rotormotor/mp3s/001 Guy Contact - Cool Blue Liquid.mp3"
+# SAMPLE_FILE = "dataset_gen/free_music/rotormotor/mp3s/001 Guy Contact - Cool Blue Liquid.mp3"
 
 class RawAudioDataset(IterableDataset):
     VALID_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac"}
@@ -46,6 +46,11 @@ class RawAudioDataset(IterableDataset):
         start_sec = start_sample / self.TARGET_SR
         duration_sec = self.chunk_samples / self.TARGET_SR
         
+        if start_sec + duration_sec > decoder.metadata.duration_seconds:
+            duration_sec = max(0, decoder.metadata.duration_seconds - start_sec)
+            if duration_sec == 0:
+                raise ValueError("No audio available at this position")
+        
         segment = decoder.get_samples_played_in_range(
             start_seconds=start_sec, stop_seconds=start_sec + duration_sec
         )
@@ -81,12 +86,17 @@ class RawAudioDataset(IterableDataset):
 
         for file_path in files_to_process:
             try:
-                audio_source = SAMPLE_FILE if SAMPLE_FILE is not None else file_path
-                decoder = AudioDecoder(audio_source, sample_rate=self.TARGET_SR)
+                # audio_source = SAMPLE_FILE if SAMPLE_FILE is not None else file_path
+                # decoder = AudioDecoder(audio_source, sample_rate=self.TARGET_SR)
+                decoder = AudioDecoder(file_path, sample_rate=self.TARGET_SR)
                 total_samples = int(decoder.metadata.duration_seconds * self.TARGET_SR)
                 
-                for start_pos in range(0, total_samples, self.chunk_samples):
-                    yield self._load_chunk(decoder, start_pos)
+                for start_pos in range(0, total_samples - self.chunk_samples + 1, self.chunk_samples):
+                    try:
+                        yield self._load_chunk(decoder, start_pos)
+                    except Exception as e:
+                        print(f"Warning: Skipping chunk at {start_pos} in {file_path}: {e}")
+                        continue
 
             except Exception as e:
                 print(f"Warning: Skipping {file_path}: {e}")

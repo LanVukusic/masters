@@ -168,6 +168,7 @@ class AudioContinuationConformer(nn.Module):
         x = sum(cb_embs) * math.sqrt(self.d_model)
 
         x = x + self.pos_embedding[:, :T_total, :]
+        x = F.dropout(x, p=0.1, training=self.training)
 
         if T_total > 1:
             if self._causal_mask is None or self._causal_mask_len != T_total:
@@ -212,74 +213,45 @@ class AudioContinuationConformer(nn.Module):
 
     def get_progressive_teacher_forcing_loss(
         self,
-        past_tokens,
-        future_tokens,
+        past_tokens,          # (B, T_past, C)
+        future_tokens,        # (B, T_future, C)
         teacher_forcing_ratio: float = 1.0,
     ):
-        """
-        Progressive teacher forcing: gradually transition from teacher forcing to free generation.
-
-        Args:
-            past_tokens: (Batch, T_past, N_Codebooks)
-            future_tokens: (Batch, T_future, N_Codebooks)
-            teacher_forcing_ratio: 1.0 = full teacher forcing, 0.0 = full autoregressive
-
-        Memory-efficient version: compute loss on full sequence first, then do a second forward for sampling.
-        """
         B, T_future, C = future_tokens.shape
 
-        if future_tokens.shape[1] > self.future_len:
-            future_tokens = future_tokens[:, : self.future_len, :].contiguous()
-
-        logits = self.forward(past_tokens, future_tokens)
-
+        # Start with prompt tokens
+        generated = past_tokens.clone()
+        total_loss = 0.0
         loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
-        total_loss = 0
 
-        for cb_idx in range(C):
-            l = logits[:, :, cb_idx, :].reshape(-1, self.vocab_size)
-            t = future_tokens[:, :, cb_idx].reshape(-1)
-            loss = loss_fn(l, t)
-            weight = 0.7**cb_idx
-            total_loss += weight * loss
+        for t in range(T_future):
+            # Forward pass through the model – gradients required
+            logits = self.forward(generated)          # (B, T_total, C, vocab)
+            # Last time step's logits
+            step_logits = logits[:, -1, :, :]        # (B, C, vocab)
 
-        if teacher_forcing_ratio < 1.0 and teacher_forcing_ratio > 0.0:
-            num_free_samples = max(1, int(T_future * (1 - teacher_forcing_ratio)))
-            sample_indices = random.sample(range(T_future), num_free_samples)
+            # Compute loss for this step (compare with ground truth)
+            for cb_idx in range(C):
+                loss = loss_fn(step_logits[:, cb_idx, :], future_tokens[:, t, cb_idx])
+                total_loss += loss * (0.7 ** cb_idx)
 
-            generated = past_tokens.clone()
-            free_loss = 0
-
-            for t in range(T_future):
+            if teacher_forcing_ratio < 1.0 and torch.rand(1).item() > teacher_forcing_ratio:
                 with torch.no_grad():
-                    logits = self.forward(generated)
-                    last_logits = logits[:, -1, :, :]
+                    next_tokens = []
+                    for cb_idx in range(C):
+                        probs = torch.softmax(step_logits[:, cb_idx, :], dim=-1)
+                        next_token = torch.multinomial(probs, 1)            # (B, 1)
+                        next_tokens.append(next_token)
+                    # Stack along the last dim → (B, 1, C)
+                    next_frame = torch.stack(next_tokens, dim=-1)          # shape (B, 1, C)
+            else:
+                next_frame = future_tokens[:, t, :].unsqueeze(1)           # (B, 1, C)
 
-                    if t in sample_indices:
-                        for cb_idx in range(C):
-                            l = last_logits[:, cb_idx, :].detach()
-                            t_idx = future_tokens[:, t, cb_idx]
-                            loss = loss_fn(l, t_idx)
-                            weight = 0.7**cb_idx
-                            free_loss = free_loss + weight * loss
+            # Now both branches yield (B, 1, C), so cat works
+            generated = torch.cat([generated, next_frame.detach()], dim=1)
 
-                        next_tokens = []
-                        for cb_idx in range(C):
-                            probs = torch.softmax(last_logits[:, cb_idx, :], dim=-1)
-                            next_token = torch.multinomial(probs, num_samples=1)
-                            next_tokens.append(next_token)
-                        next_frame = torch.stack(next_tokens, dim=-1)
-                    else:
-                        next_frame = future_tokens[:, t, :].unsqueeze(1)
-
-                    generated = torch.cat([generated, next_frame], dim=1)
-
-            free_loss = free_loss / (num_free_samples * C)
-            total_loss = (
-                teacher_forcing_ratio * total_loss
-                + (1 - teacher_forcing_ratio) * free_loss
-            )
-
+        # Average the loss over time steps and codebooks
+        total_loss = total_loss / (T_future * C)
         return total_loss
 
     def predict(
@@ -326,7 +298,7 @@ class AudioContinuationConformer(nn.Module):
             )
 
         generated = prompt_tokens.clone()
-        out = torch.empty(0, dtype=torch.long, device=prompt_tokens.device)
+        out = None
         t = 0
 
         with torch.no_grad():
@@ -376,7 +348,10 @@ class AudioContinuationConformer(nn.Module):
                     next_tokens.append(next_token)
 
                 next_frame = torch.stack(next_tokens, dim=-1)
-                out = torch.cat([out, next_frame], dim=1)
+                if out is None:
+                    out = next_frame
+                else:
+                    out = torch.cat([out, next_frame], dim=1)
                 if predict_by_one:
                     assert true_future_tokens is not None
                     next_true_frame = true_future_tokens[:, t, :].unsqueeze(1)
