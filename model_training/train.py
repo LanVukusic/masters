@@ -145,6 +145,8 @@ if __name__ == "__main__":
 
     # scaler = torch.amp.GradScaler()  # before training loop (disabled)
 
+    prev_iter_end = None
+
     for epoch in range(config["num_epochs"]):
         model.train()
         epoch_loss = 0.0
@@ -154,6 +156,11 @@ if __name__ == "__main__":
 
         for batch_idx, batch in enumerate(dataloader):
             iter_start_time = time.time()
+            # Wall-clock gap since previous iteration ended = dataloader + DAC
+            # encode + any python-side overhead between iterations.
+            dataload_time = (
+                iter_start_time - prev_iter_end if prev_iter_end is not None else 0.0
+            )
             # Batch already tokenized: {"past": [B, K, T_past], "future": [B, K, T_future]}
             past_tokens = batch["past"].to(device, non_blocking=True)
             future_tokens = batch["future"].to(device, non_blocking=False)
@@ -225,6 +232,11 @@ if __name__ == "__main__":
             # Standard optimizer step (no GradScaler)
             optimizer.step()
             scheduler.step()  # update lr scheduler
+
+            # Pure train-step time = forward + backward + clip + optimizer + scheduler.
+            # Logging blocks below are NOT counted here so we can spot pure model
+            # drift independently of audio/validation overhead spikes.
+            train_step_time = time.time() - iter_start_time
 
             # =====================================================================
             # 7. Logging
@@ -390,11 +402,25 @@ if __name__ == "__main__":
 
                     model.train()
 
-            iter_time = time.time() - iter_start_time
+            iter_end_time = time.time()
+            iter_time = iter_end_time - iter_start_time          # full body, incl. logging
+            logging_time = iter_time - train_step_time            # AR gen + val + audio
+            prev_iter_end = iter_end_time
+
             if is_metric_step:
                 writer.add_scalar("Train/IterTime", iter_time, global_step)
+                writer.add_scalar("Train/TrainStepTime", train_step_time, global_step)
+                writer.add_scalar("Train/DataLoadTime", dataload_time, global_step)
+                writer.add_scalar("Train/LoggingTime", logging_time, global_step)
                 writer.add_scalar(
-                    "Train/TimePerSample", iter_time / config["batch_size"], global_step
+                    "Train/TimePerSample",
+                    train_step_time / config["batch_size"],
+                    global_step,
+                )
+                print(
+                    f"  timings (s): iter={iter_time:.2f}  "
+                    f"train={train_step_time:.2f}  data={dataload_time:.2f}  "
+                    f"log={logging_time:.2f}"
                 )
 
             global_step += 1
