@@ -46,14 +46,15 @@ if(device == "cuda:0"):
 config = {
     **MODEL_CONFIG,
     # Training
-    "batch_size": 2,
+    "batch_size": 8,
     "learning_rate": 1e-3,
     "num_epochs": 1,
     "num_warmup_steps": 200,
     "gradient_clip": 30.0,
     "training_steps": 1000,
     # Data
-    "audio_dir": "dataset_gen/free_music/rotormotor/mp3s_small",
+    "audio_dir": "dataset_gen/free_music/rotormotor/mp3s",
+    "validation_dir": "dataset_gen/free_music/rotormotor/validation",
     "tokenizer_type": "DAC",
     # Logging
     "log_audio_every": 50,  # batches
