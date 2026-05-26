@@ -228,13 +228,6 @@ if __name__ == "__main__":
                     )
                 )
 
-                logits = None
-                predicted_tokens = None
-                with torch.no_grad():
-                    logits = model.forward(past_tokens, future_tokens)
-                    probs = torch.softmax(logits, dim=-1)
-                    predicted_tokens = logits.argmax(dim=-1).flatten().tolist()
-
                 log_metrics(
                     writer=writer,
                     loss=loss_val,
