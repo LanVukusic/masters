@@ -47,18 +47,18 @@ if(device == "cuda:0"):
 config = {
     **MODEL_CONFIG,
     # Training
-    "batch_size": 8,
-    "learning_rate": 1e-3,
+    "batch_size": 24,
+    "learning_rate": 5e-3,
     "num_epochs": 1,
-    "num_warmup_steps": 200,
-    "gradient_clip": 30.0,
-    "training_steps": 1000,
+    "num_warmup_steps": 300,
+    "gradient_clip": 1.0,
+    "training_steps": 5000,
     # Data
     "audio_dir": "dataset_gen/free_music/rotormotor/mp3s",
     "validation_dir": "dataset_gen/free_music/rotormotor/validation",
     "tokenizer_type": "DAC",
     # Logging
-    "log_audio_every": 50,  # batches
+    "log_audio_every": 150,  # batches
     "log_metrics_every": 10,  # batches
     "log_exposure_every": 100,  # batches
     "validation_every": 100,  # batches
@@ -141,7 +141,7 @@ if __name__ == "__main__":
     )
 
 
-    scaler = torch.amp.GradScaler()  # before training loop
+    # scaler = torch.amp.GradScaler()  # before training loop (disabled)
 
     for epoch in range(config["num_epochs"]):
         model.train()
@@ -209,8 +209,8 @@ if __name__ == "__main__":
                     train_metrics = None
 
             loss_val = loss.item()
-            scaler.scale(loss).backward()
-            # loss.backward()
+            # Use standard backward()/optimizer.step() instead of GradScaler
+            loss.backward()
 
             # Gradient clipping
             if config["gradient_clip"] > 0:
@@ -218,9 +218,8 @@ if __name__ == "__main__":
                     model.parameters(), config["gradient_clip"]
                 )
 
-            # optimizer.step()    # update weights
-            scaler.step(optimizer)
-            scaler.update()
+            # Standard optimizer step (no GradScaler)
+            optimizer.step()
             scheduler.step()  # update lr scheduler
 
             # =====================================================================

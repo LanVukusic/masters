@@ -33,11 +33,11 @@ def tokens_to_chunks(tokens: int, frame_size: int = DAC_FRAME_SIZE) -> int:
 
 MODEL_CONFIG = {
     "target_sampling_rate": TARGET_SAMPLING_RATE,
-    "past_len": int(2 * TOKEN_RATE),
-    "future_len": int(2 * TOKEN_RATE),
+    "past_len": int(3 * TOKEN_RATE),
+    "future_len": int(3 * TOKEN_RATE),
     # "future_len": int(3 * TOKEN_RATE),
     "vocab_size": 1024,
-    "n_codebooks": 12,
+    "n_codebooks": 4,
     "d_model": 256,
     "n_heads": 8,
     "n_layers": 6,
