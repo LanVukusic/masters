@@ -136,6 +136,15 @@ class RawAudioDataset(IterableDataset):
                 print(f"Warning: Skipping {file_path}: {e}")
                 continue
 
+    @staticmethod
+    def collate_fn(batch) -> torch.Tensor:
+        """Stack [1, 1, samples] waveform tensors into [B, 1, samples].
+
+        Used by the worker-parallel pipeline: workers yield raw waveforms,
+        the main training loop runs DAC encode once per batch on GPU.
+        """
+        return torch.cat(batch, dim=0)
+
 
 
 
