@@ -14,10 +14,7 @@ from models.simple import AudioContinuationTransformer
 # from models.conformer.conformer import AudioContinuationConformer
 
 # from model_training.dataloader.raw_dataset import RawAudioDataset
-from model_training.dataloader.IterableDataset import (
-    RawAudioDataset,
-    TokenizedAudioDataset,
-)
+from model_training.dataloader.IterableDataset import RawAudioDataset
 from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
 from model_training.model_config import (
     MODEL_CONFIG,
@@ -106,40 +103,34 @@ if __name__ == "__main__":
         random_offset=True,    # per-file jitter so each epoch sees different slices
     )
 
-    # wrap tokenizer and audio loader in one convenient wrapper
-    dataset = TokenizedAudioDataset(
-        base_dataset=raw_dataset,
-        tokenizer=tokenizer,
-        past_chunks=config["past_len"],
-        device=device,
-    )
-
+    # Parallel workers decode mp3 -> raw waveform on CPU. DAC tokenization
+    # happens once per batch in the main process on GPU. Workers never touch
+    # CUDA (no DAC, no model), so there's only one CUDA context in the system.
+    # persistent_workers keeps the 4 worker processes alive across iterator
+    # restarts, paying the ~1s startup cost only once.
     dataloader = DataLoader(
-        dataset,
+        raw_dataset,
         batch_size=config["batch_size"],
-        num_workers=0,
-        collate_fn=TokenizedAudioDataset.collate_fn,
+        num_workers=4,
+        prefetch_factor=2,
+        persistent_workers=True,
+        pin_memory=True,
+        collate_fn=RawAudioDataset.collate_fn,
     )
 
-    # Validation dataset
+    # Validation dataloader: single-process is fine — runs in short bursts of
+    # ~10 batches per trigger, parallelism not worth the worker overhead.
     val_raw_dataset = RawAudioDataset(
         audio_dir=config["validation_dir"],
         num_chunks=num_chunks,
         shuffle=False,
     )
-
-    val_dataset = TokenizedAudioDataset(
-        base_dataset=val_raw_dataset,
-        tokenizer=tokenizer,
-        past_chunks=config["past_len"],
-        device=device,
-    )
-
     val_dataloader = DataLoader(
-        val_dataset,
+        val_raw_dataset,
         batch_size=config["batch_size"],
         num_workers=0,
-        collate_fn=TokenizedAudioDataset.collate_fn,
+        pin_memory=True,
+        collate_fn=RawAudioDataset.collate_fn,
     )
 
 
@@ -154,36 +145,38 @@ if __name__ == "__main__":
         if global_step >= config["training_steps"]:
             break
 
-        for batch_idx, batch in enumerate(dataloader):
+        for batch_idx, batch_waveforms in enumerate(dataloader):
             iter_start_time = time.time()
-            # Wall-clock gap since previous iteration ended = dataloader + DAC
-            # encode + any python-side overhead between iterations.
+            # Wall-clock gap since previous iteration ended = how long workers
+            # took to produce the next raw waveform batch (mp3 decode etc).
             dataload_time = (
                 iter_start_time - prev_iter_end if prev_iter_end is not None else 0.0
             )
-            # Batch already tokenized: {"past": [B, K, T_past], "future": [B, K, T_future]}
-            past_tokens = batch["past"].to(device, non_blocking=True)
-            future_tokens = batch["future"].to(device, non_blocking=False)
-            # print("train shapes", past_tokens.shape, future_tokens.shape)
+
+            # Dataloader gives us raw waveforms [B, 1, samples] from CPU
+            # workers. Tokenize on GPU here, in the main process. This is the
+            # only DAC call per step.
+            batch_waveforms = batch_waveforms.to(device, non_blocking=True)
+            with torch.no_grad():
+                codes = tokenizer.encode(batch_waveforms)  # [B, K, T]
+
+            past_tokens = codes[:, :, : config["past_len"]]
+            future_tokens = codes[:, :, config["past_len"]:]
 
             batch_size_curr, n_cb, total_time = past_tokens.shape
 
-            # Check we have enough tokens
             if future_tokens.shape[-1] < config["future_len"]:
                 print(
-                    f"Warning: Batch {batch_idx} has insufficient tokens, skipping - {future_tokens.shape[-1]}<{config['future_len']}"
+                    f"Warning: Batch {batch_idx} has insufficient tokens, skipping - "
+                    f"{future_tokens.shape[-1]}<{config['future_len']}"
                 )
                 continue
 
             future_tokens = future_tokens[:, :, : config["future_len"]].contiguous()
 
-            # =====================================================================
-            # 3. Rearrange dimensions for model
-            # =====================================================================
-            # Model expects: [batch, time, codebooks]
-            # Dataset output is: [batch, codebooks, time]
-            past_tokens = past_tokens.transpose(1, 2).long()  # [B, T_past, K]
-            future_tokens = future_tokens.transpose(1, 2).long()  # [B, T_future, K]
+            # Model expects [B, T, K]; tokenizer returns [B, K, T].
+            past_tokens = past_tokens.transpose(1, 2).long()
+            future_tokens = future_tokens.transpose(1, 2).long()
 
             # =====================================================================
             # 4. Validate token ranges
@@ -321,9 +314,11 @@ if __name__ == "__main__":
                 val_per_cb_top1 = torch.zeros(config["n_codebooks"], device=device)
                 val_batches_seen = 0
                 with torch.no_grad():
-                    for val_batch in val_dataloader:
-                        val_past = val_batch["past"].to(device, non_blocking=True)
-                        val_future = val_batch["future"].to(device, non_blocking=False)
+                    for val_waveforms in val_dataloader:
+                        val_waveforms = val_waveforms.to(device, non_blocking=True)
+                        val_codes = tokenizer.encode(val_waveforms)  # [B, K, T]
+                        val_past = val_codes[:, :, : config["past_len"]]
+                        val_future = val_codes[:, :, config["past_len"]:]
 
                         if val_future.shape[-1] < config["future_len"]:
                             continue
