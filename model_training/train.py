@@ -47,9 +47,9 @@ if(device == "cuda:0"):
 config = {
     **MODEL_CONFIG,
     # Training
-    "batch_size": 24,
+    "batch_size": 16,
     "learning_rate": 1e-3,         # safe with AdamW on small transformer; bump to 2e-3 only if stable
-    "num_epochs": 1,
+    "num_epochs": 10,
     "num_warmup_steps": 500,       # ~10% of training_steps, standard
     "gradient_clip": 1.0,
     "training_steps": 5000,
@@ -60,8 +60,8 @@ config = {
     # Logging
     "log_audio_every": 150,  # batches
     "log_metrics_every": 10,  # batches
-    "log_exposure_every": 100,  # batches
-    "validation_every": 100,  # batches
+    "log_exposure_every": 150,  # batches
+    "validation_every": 150,  # batches
     # Fidelity decay for training
     "use_fidelity_decay": True,
 }
@@ -428,6 +428,7 @@ if __name__ == "__main__":
        
     writer.close()
     # Final save
+    os.mkdir("checkpoints")
     torch.save(
         {
             "model_state_dict": model.state_dict(),
