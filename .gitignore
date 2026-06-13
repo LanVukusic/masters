@@ -11,3 +11,6 @@ wheels/
 
 runs
 checkpoints/
+.cache
+__pycache__
+wavtokenizer_cache

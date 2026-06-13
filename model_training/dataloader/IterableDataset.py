@@ -7,9 +7,14 @@ from typing import List, Iterator
 import random
 from typing import Dict
 
-from model_training.model_config import DAC_FRAME_SIZE, TARGET_SAMPLING_RATE
+from model_training.model_config import (
+    DAC_FRAME_SIZE,
+    WAVTOKENIZER_FRAME_SIZE,
+    TARGET_SAMPLING_RATE,
+)
 
 # SAMPLE_FILE = "dataset_gen/free_music/rotormotor/mp3s/001 Guy Contact - Cool Blue Liquid.mp3"
+
 
 class RawAudioDataset(IterableDataset):
     VALID_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac"}
@@ -23,11 +28,12 @@ class RawAudioDataset(IterableDataset):
         shuffle: bool = False,
         overlap: float = 0.0,
         random_offset: bool = False,
+        frame_size: int | None = None,
     ):
         """
         audio_dir:     directory of audio files (walked recursively)
-        num_chunks:    chunks (DAC frames) per yielded window; window length is
-                       num_chunks * FRAME_SIZE samples.
+        num_chunks:    chunks per yielded window; window length is
+                       num_chunks * frame_size samples.
         shuffle:       randomize file order each epoch.
         overlap:       float in [0, 1). 0.0 = non-overlapping windows (default,
                        matches legacy behavior). 0.5 = 50% overlap, doubling the
@@ -35,7 +41,11 @@ class RawAudioDataset(IterableDataset):
         random_offset: when True, each visit to a file picks a random start
                        offset in [0, stride - 1] so the chunk grid shifts every
                        epoch. Useful for data augmentation on small datasets.
+        frame_size:    samples per token frame. Defaults to DAC_FRAME_SIZE (320).
         """
+        if frame_size is not None:
+            self.FRAME_SIZE = frame_size
+
         if not 0.0 <= overlap < 1.0:
             raise ValueError(f"overlap must be in [0, 1), got {overlap}")
 
@@ -71,12 +81,12 @@ class RawAudioDataset(IterableDataset):
     def _load_chunk(self, decoder: AudioDecoder, start_sample: int) -> torch.Tensor:
         start_sec = start_sample / self.TARGET_SR
         duration_sec = self.chunk_samples / self.TARGET_SR
-        
+
         if start_sec + duration_sec > decoder.metadata.duration_seconds:
             duration_sec = max(0, decoder.metadata.duration_seconds - start_sec)
             if duration_sec == 0:
                 raise ValueError("No audio available at this position")
-        
+
         segment = decoder.get_samples_played_in_range(
             start_seconds=start_sec, stop_seconds=start_sec + duration_sec
         )
@@ -102,7 +112,11 @@ class RawAudioDataset(IterableDataset):
         if worker_info is not None:
             per_worker = max(1, len(self.audio_files) // worker_info.num_workers)
             start_idx = worker_info.id * per_worker
-            end_idx = (start_idx + per_worker if worker_info.id < worker_info.num_workers - 1 else len(self.audio_files))
+            end_idx = (
+                start_idx + per_worker
+                if worker_info.id < worker_info.num_workers - 1
+                else len(self.audio_files)
+            )
             files_to_process = self.audio_files[start_idx:end_idx]
         else:
             files_to_process = self.audio_files
@@ -129,7 +143,9 @@ class RawAudioDataset(IterableDataset):
                     try:
                         yield self._load_chunk(decoder, start_pos)
                     except Exception as e:
-                        print(f"Warning: Skipping chunk at {start_pos} in {file_path}: {e}")
+                        print(
+                            f"Warning: Skipping chunk at {start_pos} in {file_path}: {e}"
+                        )
                         continue
 
             except Exception as e:
@@ -146,10 +162,14 @@ class RawAudioDataset(IterableDataset):
         return torch.cat(batch, dim=0)
 
 
-
-
 class TokenizedAudioDataset(IterableDataset):
-    def __init__(self, base_dataset: IterableDataset, tokenizer, past_chunks: int, device: str = "cpu"):
+    def __init__(
+        self,
+        base_dataset: IterableDataset,
+        tokenizer,
+        past_chunks: int,
+        device: str = "cpu",
+    ):
         self.base_dataset = base_dataset
         self.tokenizer = tokenizer
         self.past_chunks = past_chunks
@@ -170,13 +190,13 @@ class TokenizedAudioDataset(IterableDataset):
                     f"Tokenizer output must be [num_quantizers, time_steps], got {codes.shape}"
                 )
             yield {
-                "past": codes[:, :self.past_chunks],
-                "future": codes[:, self.past_chunks:]
+                "past": codes[:, : self.past_chunks],
+                "future": codes[:, self.past_chunks :],
             }
 
     @staticmethod
     def collate_fn(batch) -> Dict[str, torch.Tensor]:
         return {
             "past": torch.stack([b["past"] for b in batch]),
-            "future": torch.stack([b["future"] for b in batch])
+            "future": torch.stack([b["future"] for b in batch]),
         }
