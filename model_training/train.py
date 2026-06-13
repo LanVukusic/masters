@@ -16,8 +16,14 @@ from models.simple import AudioContinuationTransformer
 # from model_training.dataloader.raw_dataset import RawAudioDataset
 from model_training.dataloader.IterableDataset import RawAudioDataset
 from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
+from model_training.tokenizer.wavtokenizer_audio_tokenizer import (
+    WavTokenizerAudioTokenizer,
+)
 from model_training.model_config import (
     MODEL_CONFIG,
+    DAC_FRAME_SIZE,
+    WAVTOKENIZER_FRAME_SIZE,
+    TARGET_SAMPLING_RATE,
     tokens_to_chunks,
 )
 from utils.visualization import (
@@ -36,7 +42,7 @@ MODEL_NAME = f"{active_model.__name__}_{time.strftime('%d-%H%M%S')}"
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-if(device == "cuda:0"):
+if device == "cuda:0":
     # clean cache
     torch.cuda.empty_cache()
 
@@ -44,14 +50,14 @@ if(device == "cuda:0"):
 config = {
     **MODEL_CONFIG,
     # Training
-    "batch_size": 16,
-    "learning_rate": 1e-3,         # safe with AdamW on small transformer; bump to 2e-3 only if stable
-    "num_epochs": 10,
-    "num_warmup_steps": 500,       # ~10% of training_steps, standard
+    "batch_size": 4,
+    "learning_rate": 1e-3,  # safe with AdamW on small transformer; bump to 2e-3 only if stable
+    "num_epochs": 1,
+    "num_warmup_steps": 500,  # ~10% of training_steps, standard
     "gradient_clip": 1.0,
     "training_steps": 5000,
     # Data
-    "audio_dir": "dataset_gen/free_music/rotormotor/mp3s",
+    "audio_dir":      "dataset_gen/free_music/rotormotor/mp3s",
     "validation_dir": "dataset_gen/free_music/rotormotor/validation",
     "tokenizer_type": "DAC",
     # Logging
@@ -86,21 +92,35 @@ if __name__ == "__main__":
         num_training_steps=config["training_steps"],
     )
 
-    # Tokenizer
-    tokenizer = DACAudioTokenizer(
-        num_quantizers=config["n_codebooks"], device=device
-    )
+    # Tokenizer selection
+    tokenizer_type = config.get("tokenizer_type", "DAC")
+    if tokenizer_type == "WavTokenizer":
+        frame_size = WAVTOKENIZER_FRAME_SIZE
+        config["vocab_size"] = 4096
+        config["n_codebooks"] = 1
+        token_rate = TARGET_SAMPLING_RATE / frame_size
+        config["past_len"] = int(3 * token_rate)
+        config["future_len"] = int(3 * token_rate)
+        tokenizer = WavTokenizerAudioTokenizer(
+            num_quantizers=config["n_codebooks"], device=device
+        )
+    else:
+        frame_size = DAC_FRAME_SIZE
+        tokenizer = DACAudioTokenizer(
+            num_quantizers=config["n_codebooks"], device=device
+        )
 
     # Dataset (wrapping with tokenizer)
     tokens_needed = config["past_len"] + config["future_len"]
-    num_chunks = tokens_to_chunks(tokens_needed)
+    num_chunks = tokens_to_chunks(tokens_needed, frame_size)
 
     raw_dataset = RawAudioDataset(
         audio_dir=config["audio_dir"],
         num_chunks=num_chunks,
         shuffle=True,
-        overlap=0.5,           # 50% window overlap doubles training samples
-        random_offset=True,    # per-file jitter so each epoch sees different slices
+        overlap=0.5,  # 50% window overlap doubles training samples
+        random_offset=True,  # per-file jitter so each epoch sees different slices
+        frame_size=frame_size,
     )
 
     # Parallel workers decode mp3 -> raw waveform on CPU. DAC tokenization
@@ -124,6 +144,7 @@ if __name__ == "__main__":
         audio_dir=config["validation_dir"],
         num_chunks=num_chunks,
         shuffle=False,
+        frame_size=frame_size,
     )
     val_dataloader = DataLoader(
         val_raw_dataset,
@@ -132,7 +153,6 @@ if __name__ == "__main__":
         pin_memory=True,
         collate_fn=RawAudioDataset.collate_fn,
     )
-
 
     # scaler = torch.amp.GradScaler()  # before training loop (disabled)
 
@@ -161,7 +181,7 @@ if __name__ == "__main__":
                 codes = tokenizer.encode(batch_waveforms)  # [B, K, T]
 
             past_tokens = codes[:, :, : config["past_len"]]
-            future_tokens = codes[:, :, config["past_len"]:]
+            future_tokens = codes[:, :, config["past_len"] :]
 
             batch_size_curr, n_cb, total_time = past_tokens.shape
 
@@ -318,12 +338,14 @@ if __name__ == "__main__":
                         val_waveforms = val_waveforms.to(device, non_blocking=True)
                         val_codes = tokenizer.encode(val_waveforms)  # [B, K, T]
                         val_past = val_codes[:, :, : config["past_len"]]
-                        val_future = val_codes[:, :, config["past_len"]:]
+                        val_future = val_codes[:, :, config["past_len"] :]
 
                         if val_future.shape[-1] < config["future_len"]:
                             continue
 
-                        val_future = val_future[:, :, : config["future_len"]].contiguous()
+                        val_future = val_future[
+                            :, :, : config["future_len"]
+                        ].contiguous()
                         val_past = val_past.transpose(1, 2).long()
                         val_future = val_future.transpose(1, 2).long()
 
@@ -398,8 +420,8 @@ if __name__ == "__main__":
                     model.train()
 
             iter_end_time = time.time()
-            iter_time = iter_end_time - iter_start_time          # full body, incl. logging
-            logging_time = iter_time - train_step_time            # AR gen + val + audio
+            iter_time = iter_end_time - iter_start_time  # full body, incl. logging
+            logging_time = iter_time - train_step_time  # AR gen + val + audio
             prev_iter_end = iter_end_time
 
             if is_metric_step:
@@ -420,7 +442,6 @@ if __name__ == "__main__":
 
             global_step += 1
 
-       
     writer.close()
     # Final save
     os.mkdir("checkpoints")
