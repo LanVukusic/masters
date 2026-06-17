@@ -1,11 +1,12 @@
 # raw_audio_dataset.py
 import os
-import torch
-from torchcodec.decoders import AudioDecoder
-from torch.utils.data import IterableDataset
-from typing import List, Iterator
 import random
-from typing import Dict
+from typing import Dict, Iterator, List
+
+import torch
+import torchaudio.transforms as T
+from torchcodec.decoders import WavDecoder
+from torch.utils.data import IterableDataset
 
 from model_training.model_config import (
     DAC_FRAME_SIZE,
@@ -13,11 +14,10 @@ from model_training.model_config import (
     TARGET_SAMPLING_RATE,
 )
 
-# SAMPLE_FILE = "dataset_gen/free_music/rotormotor/mp3s/001 Guy Contact - Cool Blue Liquid.mp3"
-
 
 class RawAudioDataset(IterableDataset):
-    VALID_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac"}
+    VALID_EXTENSIONS = {".wav"}
+    # VALID_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac"}
     TARGET_SR = TARGET_SAMPLING_RATE
     FRAME_SIZE = DAC_FRAME_SIZE  # Fixed: DAC 24kHz stride = 1 token time step
 
@@ -61,6 +61,9 @@ class RawAudioDataset(IterableDataset):
         if not self.audio_files:
             raise ValueError(f"No audio files found in: {audio_dir}")
 
+        # Cache for resamplers to avoid re-initializing for every chunk
+        self._resampler_cache: Dict[int, T.Resample] = {}
+
         chunk_sec = self.chunk_samples / self.TARGET_SR
         stride_sec = self.stride_samples / self.TARGET_SR
         print(
@@ -78,25 +81,42 @@ class RawAudioDataset(IterableDataset):
                     files.append(os.path.join(dirpath, fname))
         return sorted(files)
 
-    def _load_chunk(self, decoder: AudioDecoder, start_sample: int) -> torch.Tensor:
+    def _get_resampler(self, source_sr: int) -> T.Resample:
+        """Retrieve or create a cached torchaudio Resample transform."""
+        if source_sr not in self._resampler_cache:
+            self._resampler_cache[source_sr] = T.Resample(
+                source_sr, self.TARGET_SR
+            )
+        return self._resampler_cache[source_sr]
+
+    def _load_chunk(self, decoder: WavDecoder, start_sample: int) -> torch.Tensor:
+        # Calculate time in seconds for the specific range
         start_sec = start_sample / self.TARGET_SR
         duration_sec = self.chunk_samples / self.TARGET_SR
 
-        if start_sec + duration_sec > decoder.metadata.duration_seconds:
-            duration_sec = max(0, decoder.metadata.duration_seconds - start_sec)
-            if duration_sec == 0:
-                raise ValueError("No audio available at this position")
-
+        # Get samples using the new API
+        # We clamp the stop time to the file duration to avoid errors, though 
+        # the loop logic in __iter__ should mostly handle this.
         segment = decoder.get_samples_played_in_range(
             start_seconds=start_sec, stop_seconds=start_sec + duration_sec
         )
+        
         waveform = segment.data  # [channels, samples]
+        source_sr = segment.sample_rate
 
+        # Resample if the source audio is not at the target sampling rate
+        if source_sr != self.TARGET_SR:
+            resampler = self._get_resampler(source_sr)
+            waveform = resampler(waveform)
+
+        # Convert to mono if stereo
         if waveform.shape[0] > 1:
             waveform = waveform.mean(dim=0, keepdim=True)  # [1, samples]
 
+        # Ensure shape is [1, 1, samples] for batch consistency later
         waveform = waveform.unsqueeze(0)  # [1, 1, samples]
 
+        # Pad or truncate to ensure exact chunk_samples size
         current_len = waveform.shape[-1]
         if current_len < self.chunk_samples:
             waveform = torch.nn.functional.pad(
@@ -105,7 +125,7 @@ class RawAudioDataset(IterableDataset):
         elif current_len > self.chunk_samples:
             waveform = waveform[..., : self.chunk_samples]
 
-        return waveform  # [1, chunk_samples]
+        return waveform  # [1, 1, chunk_samples]
 
     def __iter__(self) -> Iterator[torch.Tensor]:
         worker_info = torch.utils.data.get_worker_info()
@@ -126,7 +146,10 @@ class RawAudioDataset(IterableDataset):
 
         for file_path in files_to_process:
             try:
-                decoder = AudioDecoder(file_path, sample_rate=self.TARGET_SR)
+                # Use the new WavDecoder
+                decoder = WavDecoder(file_path)
+                
+                # Calculate total samples based on TARGET_SR to maintain consistent chunking
                 total_samples = int(decoder.metadata.duration_seconds * self.TARGET_SR)
 
                 offset = (
@@ -135,6 +158,7 @@ class RawAudioDataset(IterableDataset):
                     else 0
                 )
 
+                # Iterate over the file using the target sample rate grid
                 for start_pos in range(
                     offset,
                     total_samples - self.chunk_samples + 1,
