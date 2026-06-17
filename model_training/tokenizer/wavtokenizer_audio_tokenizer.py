@@ -12,7 +12,7 @@ _WAVTOKENIZER_PATH = os.path.join(
 if os.path.isdir(_WAVTOKENIZER_PATH) and _WAVTOKENIZER_PATH not in sys.path:
     sys.path.insert(0, _WAVTOKENIZER_PATH)
 
-from decoder.pretrained import WavTokenizer
+from WavTokenizer.decoder import WavTokenizer
 from model_training.model_config import TARGET_SAMPLING_RATE
 
 HF_REPO = "novateur/WavTokenizer-large-unify-40token"
