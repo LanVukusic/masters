@@ -10,7 +10,8 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from models.simple import AudioContinuationTransformer
+# from models.simple import AudioContinuationTransformer
+from models.delayedTransformer import AudioContinuationTransformerDelay
 # from models.conformer.conformer import AudioContinuationConformer
 
 # from model_training.dataloader.raw_dataset import RawAudioDataset
@@ -19,11 +20,16 @@ from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
 from model_training.tokenizer.wavtokenizer_audio_tokenizer import (
     WavTokenizerAudioTokenizer,
 )
+from model_training.tokenizer.encodec_audio_tokenizer import (
+    EnCodecAudioTokenizer,
+)
 from model_training.model_config import (
     MODEL_CONFIG,
     DAC_FRAME_SIZE,
     WAVTOKENIZER_FRAME_SIZE,
+    ENCODEC_FRAME_SIZE,
     TARGET_SAMPLING_RATE,
+    compute_token_lengths,
     tokens_to_chunks,
 )
 from utils.visualization import (
@@ -33,9 +39,10 @@ from utils.visualization import (
     log_metrics,
     log_visualization,
 )
+from model_training.perceptual_loss import PerceptualLoss
 
 
-active_model = AudioContinuationTransformer
+active_model = AudioContinuationTransformerDelay
 
 
 MODEL_NAME = f"{active_model.__name__}_{time.strftime('%d-%H%M%S')}"
@@ -51,15 +58,15 @@ config = {
     **MODEL_CONFIG,
     # Training
     "batch_size": 4,
-    "learning_rate": 1e-3,  # safe with AdamW on small transformer; bump to 2e-3 only if stable
-    "num_epochs": 1,
-    "num_warmup_steps": 500,  # ~10% of training_steps, standard
-    "gradient_clip": 1.0,
-    "training_steps": 5000,
+    "learning_rate": 1e-3,
+    "num_epochs": 5,
+    "num_warmup_steps": 200,
+    "gradient_clip": 5.0,
+    "training_steps": 50000,
     # Data
-    "audio_dir":      "dataset_gen/free_music/rotormotor/mp3s",
+    "audio_dir": "dataset_gen/free_music/rotormotor/mp3s",
     "validation_dir": "dataset_gen/free_music/rotormotor/validation",
-    "tokenizer_type": "DAC",
+    "tokenizer_type": "EnCodec",
     # Logging
     "log_audio_every": 150,  # batches
     "log_metrics_every": 10,  # batches
@@ -67,6 +74,11 @@ config = {
     "validation_every": 150,  # batches
     # Fidelity decay for training
     "use_fidelity_decay": True,
+    # Perceptual loss (requires EnCodec tokenizer)
+    "lambda_percep": 1.0,
+    "percep_tau_start": 1.0,
+    "percep_tau_end": 0.1,
+    "percep_delay_steps": 500,
 }
 
 # main serves as the multiprocessing guard in python 14.
@@ -77,8 +89,44 @@ if __name__ == "__main__":
     writer = SummaryWriter(log_dir=f"runs/{MODEL_NAME}")
     print(f"TensorBoard logs: runs/{MODEL_NAME}")
 
+    # Tokenizer selection — must happen before model creation so that
+    # config["past_len"] / config["future_len"] reflect the correct token rate.
+    tokenizer_type = config.get("tokenizer_type", "DAC")
+    if tokenizer_type == "WavTokenizer":
+        frame_size = WAVTOKENIZER_FRAME_SIZE
+        config["vocab_size"] = 4096
+        config["n_codebooks"] = 1
+        tokenizer = WavTokenizerAudioTokenizer(
+            num_quantizers=config["n_codebooks"], device=device
+        )
+    elif tokenizer_type == "EnCodec":
+        frame_size = ENCODEC_FRAME_SIZE
+        tokenizer = EnCodecAudioTokenizer(
+            num_quantizers=config["n_codebooks"], device=device
+        )
+    elif tokenizer_type == "DAC":
+        frame_size = DAC_FRAME_SIZE
+        tokenizer = DACAudioTokenizer(
+            num_quantizers=config["n_codebooks"], device=device
+        )
+    else:
+        print("NO TOKENIZER")
+        sys.exit(1)
+
+    config["past_len"], config["future_len"] = compute_token_lengths(frame_size)
+    print(f"Tokenizer: {tokenizer_type} ({TARGET_SAMPLING_RATE / frame_size:.1f} tps)")
+    print(f"  past_len={config['past_len']}, future_len={config['future_len']}")
+    print(
+        f"  max_len (flattened): {config['past_len'] + config['future_len']} × {config['n_codebooks']} = {(config['past_len'] + config['future_len']) * config['n_codebooks']}"
+    )
+
     model = active_model(config)
     model.to(device)
+    if device == "cuda":
+        print(
+            f"  CUDA after model init: {torch.cuda.memory_allocated() / 1e9:.2f} GB "
+            f"(peak: {torch.cuda.max_memory_allocated() / 1e9:.2f} GB)"
+        )
 
     # Optimizer
     optimizer = torch.optim.AdamW(
@@ -91,24 +139,6 @@ if __name__ == "__main__":
         num_warmup_steps=config["num_warmup_steps"],
         num_training_steps=config["training_steps"],
     )
-
-    # Tokenizer selection
-    tokenizer_type = config.get("tokenizer_type", "DAC")
-    if tokenizer_type == "WavTokenizer":
-        frame_size = WAVTOKENIZER_FRAME_SIZE
-        config["vocab_size"] = 4096
-        config["n_codebooks"] = 1
-        token_rate = TARGET_SAMPLING_RATE / frame_size
-        config["past_len"] = int(3 * token_rate)
-        config["future_len"] = int(3 * token_rate)
-        tokenizer = WavTokenizerAudioTokenizer(
-            num_quantizers=config["n_codebooks"], device=device
-        )
-    else:
-        frame_size = DAC_FRAME_SIZE
-        tokenizer = DACAudioTokenizer(
-            num_quantizers=config["n_codebooks"], device=device
-        )
 
     # Dataset (wrapping with tokenizer)
     tokens_needed = config["past_len"] + config["future_len"]
@@ -154,6 +184,19 @@ if __name__ == "__main__":
         collate_fn=RawAudioDataset.collate_fn,
     )
 
+    # Perceptual loss — frozen EnCodec decoder + multi-resolution STFT loss
+    if config.get("lambda_percep", 0) > 0 and tokenizer_type == "EnCodec":
+        perceptual_loss = PerceptualLoss(tokenizer.model).to(device)
+        # Train mode enables cuDNN RNN backward through decoder's LSTM.
+        # requires_grad=False prevents weight updates so the decoder stays frozen.
+        perceptual_loss.train()
+        print(
+            f"Perceptual loss initialized (lambda={config['lambda_percep']}, "
+            f"tau={config['percep_tau_start']}→{config['percep_tau_end']})"
+        )
+    else:
+        perceptual_loss = None
+
     # scaler = torch.amp.GradScaler()  # before training loop (disabled)
 
     prev_iter_end = None
@@ -177,6 +220,13 @@ if __name__ == "__main__":
             # workers. Tokenize on GPU here, in the main process. This is the
             # only DAC call per step.
             batch_waveforms = batch_waveforms.to(device, non_blocking=True)
+            # Slice future waveform segment for perceptual loss
+            if perceptual_loss is not None:
+                past_samples = config["past_len"] * frame_size
+                future_samples = config["future_len"] * frame_size
+                real_future_waveform = batch_waveforms[
+                    :, :, past_samples : past_samples + future_samples
+                ]
             with torch.no_grad():
                 codes = tokenizer.encode(batch_waveforms)  # [B, K, T]
 
@@ -220,17 +270,40 @@ if __name__ == "__main__":
             # fp16 without GradScaler silently kills training via gradient underflow.
             with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
                 if is_metric_step:
-                    loss, train_metrics = model.get_training_loss(
+                    loss_ce, train_metrics, logits_3d = model.get_training_loss(
                         past_tokens=past_tokens,
                         future_tokens=future_tokens,
                         return_metrics=True,
                     )
                 else:
-                    loss = model.get_training_loss(
+                    loss_ce, logits_3d = model.get_training_loss(
                         past_tokens=past_tokens,
                         future_tokens=future_tokens,
                     )
                     train_metrics = None
+
+                # Perceptual loss (Gumbel-Softmax decode → MR-STFT)
+                if (
+                    perceptual_loss is not None
+                    and global_step >= config["percep_delay_steps"]
+                ):
+                    frac = min(global_step / max(config["training_steps"] - 1, 1), 1.0)
+                    tau = (
+                        config["percep_tau_start"]
+                        + (config["percep_tau_end"] - config["percep_tau_start"]) * frac
+                    )
+                    percep_loss = perceptual_loss(
+                        logits_3d,
+                        real_future_waveform,
+                        tau=tau,
+                        loss_ce=loss_ce,
+                    )
+                    loss = loss_ce + config["lambda_percep"] * percep_loss
+                else:
+                    loss = loss_ce
+                    percep_loss = (
+                        loss_ce.new_zeros(()) if perceptual_loss is not None else None
+                    )
 
             loss_val = loss.item()
             # Use standard backward()/optimizer.step() instead of GradScaler
@@ -278,16 +351,27 @@ if __name__ == "__main__":
                     log_codebook_metrics(
                         writer, train_metrics, global_step, prefix="Train"
                     )
+                if perceptual_loss is not None:
+                    writer.add_scalar(
+                        "Train/PerceptualLoss", percep_loss.item(), global_step
+                    )
+                    writer.add_scalar("Train/CE_Loss", loss_ce.item(), global_step)
 
                 top1_mean = (
                     train_metrics["Top1"].mean().item()
                     if train_metrics is not None
                     else float("nan")
                 )
+                percep_str = (
+                    f" | CE: {loss_ce.item():.4f} Percep: {percep_loss.item():.4f}"
+                    if perceptual_loss is not None
+                    else ""
+                )
                 print(
                     f"Epoch {epoch + 1} | step: {global_step:>5d} | "
                     f"Loss: {loss_val:.4f} | Top1: {top1_mean:.3f} | "
                     f"Grad: {grad_norm:.3f} | LR: {scheduler.get_last_lr()[0]:.2e}"
+                    f"{percep_str}"
                 )
 
             # Exposure-bias check: AR-with-teacher-forcing vs free-running AR.
@@ -325,6 +409,9 @@ if __name__ == "__main__":
                     del preds_tf, preds_ar
                 model.train()
 
+            # global_step += 1
+            # continue
+
             # Validation pass — use distinct variable names so we don't clobber
             # the training tensors used by the audio block below.
             if global_step % config["validation_every"] == 0:
@@ -349,7 +436,7 @@ if __name__ == "__main__":
                         val_past = val_past.transpose(1, 2).long()
                         val_future = val_future.transpose(1, 2).long()
 
-                        vloss, vmetrics = model.get_training_loss(
+                        vloss, vmetrics, _ = model.get_training_loss(
                             past_tokens=val_past,
                             future_tokens=val_future,
                             return_metrics=True,
@@ -441,10 +528,11 @@ if __name__ == "__main__":
                 )
 
             global_step += 1
+            if global_step >= config["training_steps"]:
+                break
 
     writer.close()
     # Final save
-    os.mkdir("checkpoints")
     torch.save(
         {
             "model_state_dict": model.state_dict(),

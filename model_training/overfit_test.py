@@ -34,7 +34,12 @@ from model_training.dataloader.IterableDataset import (
     TokenizedAudioDataset,
 )
 from model_training.tokenizer.dac_audio_tokenizer import DACAudioTokenizer
-from model_training.model_config import MODEL_CONFIG, tokens_to_chunks
+from model_training.model_config import (
+    MODEL_CONFIG,
+    DAC_FRAME_SIZE,
+    compute_token_lengths,
+    tokens_to_chunks,
+)
 
 
 AUDIO_DIR = "dataset_gen/free_music/rotormotor/mp3s"
@@ -49,13 +54,16 @@ if __name__ == "__main__":
     print(f"Device: {device}")
 
     config = {**MODEL_CONFIG, "batch_size": BATCH_SIZE}
+    config["past_len"], config["future_len"] = compute_token_lengths(DAC_FRAME_SIZE)
 
     print("Building model...")
     model = AudioContinuationTransformer(config).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  trainable params: {n_params:,}")
-    print(f"  d_model={config['d_model']}, n_layers={config['n_layers']}, "
-          f"d_ff={config['d_ff']}, n_codebooks={config['n_codebooks']}")
+    print(
+        f"  d_model={config['d_model']}, n_layers={config['n_layers']}, "
+        f"d_ff={config['d_ff']}, n_codebooks={config['n_codebooks']}"
+    )
     print(f"  past_len={config['past_len']}, future_len={config['future_len']}")
 
     optimizer = torch.optim.AdamW(
@@ -63,11 +71,11 @@ if __name__ == "__main__":
     )
 
     print("Building tokenizer + dataset...")
-    tokenizer = DACAudioTokenizer(
-        num_quantizers=config["n_codebooks"], device=device
-    )
+    tokenizer = DACAudioTokenizer(num_quantizers=config["n_codebooks"], device=device)
 
-    num_chunks = tokens_to_chunks(config["past_len"] + config["future_len"])
+    num_chunks = tokens_to_chunks(
+        config["past_len"] + config["future_len"], DAC_FRAME_SIZE
+    )
     raw_dataset = RawAudioDataset(
         audio_dir=AUDIO_DIR,
         num_chunks=num_chunks,
@@ -90,9 +98,7 @@ if __name__ == "__main__":
     batch = next(iter(loader))
     past = batch["past"].to(device).transpose(1, 2).long()
     future = (
-        batch["future"].to(device)[:, :, : config["future_len"]]
-        .transpose(1, 2)
-        .long()
+        batch["future"].to(device)[:, :, : config["future_len"]].transpose(1, 2).long()
     )
     print(f"  past:   {tuple(past.shape)}  (B, T_past, K)")
     print(f"  future: {tuple(future.shape)}  (B, T_future, K)")
@@ -101,9 +107,11 @@ if __name__ == "__main__":
     # near-uniform logits initially -> loss near ln(vocab).
     model.eval()
     with torch.no_grad():
-        baseline_loss = model.get_training_loss(past, future).item()
-    print(f"\nInitial loss (eval mode): {baseline_loss:.4f}  "
-          f"(random baseline ≈ {torch.tensor(float(config['vocab_size'])).log().item():.4f})")
+        baseline_loss = model.get_training_loss(past, future)[0].item()
+    print(
+        f"\nInitial loss (eval mode): {baseline_loss:.4f}  "
+        f"(random baseline ≈ {torch.tensor(float(config['vocab_size'])).log().item():.4f})"
+    )
 
     print(f"\nOverfit run: {NUM_STEPS} steps on the same batch, lr={LEARNING_RATE}")
     print("=" * 60)
@@ -113,7 +121,7 @@ if __name__ == "__main__":
     for step in range(NUM_STEPS):
         optimizer.zero_grad()
         with torch.amp.autocast(device_type=device.type, dtype=torch.bfloat16):
-            loss = model.get_training_loss(past, future)
+            loss = model.get_training_loss(past, future)[0]
         loss.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
@@ -122,8 +130,7 @@ if __name__ == "__main__":
         losses.append(loss_val)
         if step % LOG_EVERY == 0 or step == NUM_STEPS - 1:
             print(
-                f"step {step:4d}  loss={loss_val:.4f}  "
-                f"grad_norm={grad_norm.item():.3f}"
+                f"step {step:4d}  loss={loss_val:.4f}  grad_norm={grad_norm.item():.3f}"
             )
 
     print("=" * 60)
@@ -138,7 +145,9 @@ if __name__ == "__main__":
     elif final < 2.0:
         verdict = "MOSTLY HEALTHY — model is learning but slowly. Check init / LR."
     elif final < 4.0:
-        verdict = "DEGRADED — model is partially stuck. Likely capacity or numerical issue."
+        verdict = (
+            "DEGRADED — model is partially stuck. Likely capacity or numerical issue."
+        )
     else:
         verdict = "BROKEN — model cannot fit even one batch. Bug is structural."
     print(f"\nVerdict: {verdict}")

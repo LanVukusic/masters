@@ -13,10 +13,12 @@ dependencies = [
   "transformers>=4.57.1",
   "torchinfo>=1.8.0",
   "descript-audio-codec>=1.0.0",
+  "encodec>=0.1.1",
   "tqdm>=4.67.1",
   "nvidia-npp>=13.1.0.44",
   "ffmpeg>=1.4",
   "tensorboard",
+  "ruff>=0.15.18",
 ]
 
 # CPU only
@@ -57,5 +59,5 @@ explicit = true
 torch = [{ index = "pytorch-gpu" }]
 torchvision = [{ index = "pytorch-gpu" }]
 torchaudio = [{ index = "pytorch-gpu" }]
-torchcodec = [{ index = "pytorch-gpu" }]
+torchcodec = [{ index = "pytorch-cpu" }]
 

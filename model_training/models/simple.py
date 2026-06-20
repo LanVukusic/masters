@@ -197,7 +197,7 @@ class AudioContinuationTransformer(nn.Module):
         out_frames = []
 
         for t in range(max_new):
-            hidden = self._run_backbone(generated)               # [B, T, d_model]
+            hidden = self._run_backbone(generated)  # [B, T, d_model]
             last_logits = self._apply_heads(hidden[:, -1:, :])[:, 0]  # [B, K, V]
 
             next_frame = self._sample_frame(
@@ -222,8 +222,8 @@ class AudioContinuationTransformer(nn.Module):
 
     def _sample_frame(
         self,
-        logits: torch.Tensor,      # [B, K, V]
-        generated: torch.Tensor,   # [B, T, K]
+        logits: torch.Tensor,  # [B, K, V]
+        generated: torch.Tensor,  # [B, T, K]
         temperature: float,
         top_k: int | None,
         top_p: float,
@@ -279,7 +279,7 @@ if __name__ == "__main__":
     future = torch.randint(0, 1024, (2, 150, 12))
     out = model(past, future)
     print("forward (with future):", out.shape)  # [2, 150, 12, 1024]
-    loss = model.get_training_loss(past, future)
+    loss = model.get_training_loss(past, future)[0]
     print("loss:", loss.item())
     gen = model.predict(past, top_k=200, top_p=0.95)
     print("predict:", gen.shape)  # [2, 150, 12]
