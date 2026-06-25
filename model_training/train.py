@@ -59,12 +59,13 @@ config = {
     # Training
     "batch_size": 4,
     "learning_rate": 1e-3,
-    "num_epochs": 5,
+    "num_epochs": 500,
     "num_warmup_steps": 200,
     "gradient_clip": 5.0,
     "training_steps": 50000,
     # Data
-    "audio_dir": "dataset_gen/free_music/rotormotor/mp3s",
+    # "audio_dir": "dataset_gen/free_music/rotormotor/mp3s",
+    "audio_dir": "dataset_gen/free_music/rotormotor/validation", # overfit test. can the model finetune on validation dir
     "validation_dir": "dataset_gen/free_music/rotormotor/validation",
     "tokenizer_type": "EnCodec",
     # Logging
